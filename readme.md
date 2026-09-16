@@ -126,9 +126,9 @@ You can also create new conda environment in anaconda prompt
 The synthetic dataset is generated randomly, whereas for Segthor it is required to put the file [`segthor_part1.zip`](https://amsuni-my.sharepoint.com/:u:/g/personal/h_t_g_kervadec_uva_nl/IQBJLXRY5wedSYEuofqRtuylAWiiHp2ciems5XSCu3DFMkA?e=qa3Ujf) (required a UvA account) in the `data/` folder. If the computer running it is powerful enough, the recipe for `data/SEGTHOR` can be modified in the [Makefile](Makefile) to enable multi-processing (`-p -1` option, see `python slice_segthor.py --help` or its code directly).
 Also one note on $ make data/SEGTHOR, if you run this command you will get an error, I initially got an AssertionError when running make data/SEGTHOR. After checking the contents of the data folder, I noticed that segthor_part1.zip was present, but the expected extracted folder data/segthor_part1 was missing. The solution was to extract the zip file first and then rerun make data/SEGTHOR.
 ```
+$ make data/segthor_part1
 $ make data/TOY2
 $ make data/SEGTHOR
-$ rm -rf ./data/TOY2
 ```
 
 For windows users, you can use the following instead
