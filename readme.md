@@ -151,14 +151,14 @@ $ mv data/SEGTHOR_tmp data/SEGTHOR
 Running a training
 ```
 $ python main.py --help
-usage: main.py [-h] [--epochs EPOCHS] [--dataset {TOY2,SEGTHOR}] [--mode {partial,full}] [--loss {CE,Dice}] --dest DEST [--gpu] [--debug]
+usage: main.py [-h] [--epochs EPOCHS] [--dataset {TOY2,SEGTHOR}] [--mode {partial,full}] [--loss {CE,Dice,DiceCE}] --dest DEST [--gpu] [--debug]
 
 options:
   -h, --help            show this help message and exit
   --epochs EPOCHS
   --dataset {TOY2,SEGTHOR}
   --mode {partial,full}
-  --loss {CE,Dice}
+  --loss {CE,Dice,DiceCE}
   --dest DEST           Destination directory to save the results (predictions and weights).
   --gpu
   --debug               Keep only a fraction (10 samples) of the datasets, to test the logic around epochs and logging easily.
