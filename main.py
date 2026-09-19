@@ -50,12 +50,14 @@ from utils import (Dcm,
                    dice_coef,
                    save_images)
 
-from losses import (CrossEntropy, SoftDiceLoss, DiceCELoss)
+from losses import (CrossEntropy, SoftDiceLoss, DiceCELoss, DiceTopKLoss, DiceFocalLoss)
 
 losses = {
     'CE': CrossEntropy,
     'Dice': SoftDiceLoss,
-    'DiceCE': DiceCELoss
+    'DiceCE': DiceCELoss,
+    'DiceTopK': DiceTopKLoss,
+    'DiceFocal': DiceFocalLoss
 }
 
 datasets_params: dict[str, dict[str, Any]] = {}
