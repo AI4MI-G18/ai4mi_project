@@ -51,14 +51,24 @@ from utils import (Dcm,
                    dice_coef,
                    save_images)
 
-from losses import (CrossEntropy, SoftDiceLoss, DiceCELoss, DiceTopKLoss, DiceFocalLoss)
+from losses import (CrossEntropy, TopKCrossEntropy, FocalLoss,
+                    SoftDiceLoss, DiceCELoss, DiceTopKLoss, DiceFocalLoss)
 
 losses = {
     'CE': CrossEntropy,
+    'TopK': TopKCrossEntropy,
+    'Focal': FocalLoss,
     'Dice': SoftDiceLoss,
     'DiceCE': DiceCELoss,
     'DiceTopK': DiceTopKLoss,
     'DiceFocal': DiceFocalLoss
+}
+
+# the networks --arch can name
+architectures = {
+    'ENet': ENet,
+    'ENetImproved': ENetImproved,
+    'shallowCNN': shallowCNN,
 }
 
 datasets_params: dict[str, dict[str, Any]] = {}
@@ -98,8 +108,10 @@ def setup(args) -> tuple[nn.Module, Any, Any, DataLoader, DataLoader, int]:
     K: int = datasets_params[args.dataset]['K']
     kernels: int = datasets_params[args.dataset]['kernels'] if 'kernels' in datasets_params[args.dataset] else 8
     factor: int = datasets_params[args.dataset]['factor'] if 'factor' in datasets_params[args.dataset] else 2
-    net = datasets_params[args.dataset]['net'](1, K, **{k: v for k, v in datasets_params[args.dataset].items()
-                                                        if k not in ('K', 'net', 'B', 'root')})
+    # --arch picks the network; without it the dataset's own default applies
+    net_class = architectures[args.arch] if args.arch else datasets_params[args.dataset]['net']
+    net = net_class(1, K, **{k: v for k, v in datasets_params[args.dataset].items()
+                             if k not in ('K', 'net', 'B', 'root')})
     net.init_weights()
     net.to(device)
 
@@ -265,6 +277,8 @@ def main():
     parser.add_argument('--dataset', default='TOY2', choices=datasets_params.keys())
     parser.add_argument('--mode', default='full', choices=['partial', 'full'])
     parser.add_argument('--loss', default='CE', choices=losses.keys())
+    parser.add_argument('--arch', default=None, choices=architectures.keys(),
+                        help="Network to train. Default: the dataset's own choice.")
     parser.add_argument('--dest', type=Path, required=True,
                         help="Destination directory to save the results (predictions and weights).")
 
