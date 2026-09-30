@@ -1,15 +1,19 @@
 #!/usr/bin/bash
-# run the 2D view, see the doc
-#python ...
 
-# run the 3D view. Some issues (segthor_train -> segthor_part1, and code), see the git log
-python stitch.py --data_folder "results/segthor/$RUN/best_epoch/val" \
-    --dest_folder "volumes/segthor/$RUN" \
+# unresample patients. see how the resampling preprocessng works
+PREPROC_ARG=()
+if [[ -f "data/$DATASET/preprocessing.json" ]]; then
+    PREPROC_ARG=(--preprocessing "data/$DATASET/preprocessing.json")
+else
+    echo "== no data/$DATASET/preprocessing.json; stitching without undoing any resampling" >&2
+fi
+
+python stitch.py --data_folder "$RUN_DIR/best_epoch/val" \
+    --dest_folder "$VOL_DIR" \
     --num_classes 255 \
     --grp_regex "(Patient_\d\d)_\d\d\d\d" \
-    --source_scan_pattern "data/train/{id_}/GT.nii.gz"
+    --source_scan_pattern "data/train/{id_}/GT.nii.gz" \
+    "${PREPROC_ARG[@]}"
 
-# Go and check volumes/segthor/$RUN/*gz with 3D Slicer / ITK-SNAP.
-#$ ls volumes/segthor/ENet-DiceCE/
-#Patient_01.nii.gz  Patient_13.nii.gz  Patient_22.nii.gz  Patient_28.nii.gz  Patient_30.nii.gz
+# Go and check $VOL_DIR/*gz with 3D Slicer / ITK-SNAP.
 # They are labelmap, so overlap and get the segmentation you want.

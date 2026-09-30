@@ -19,6 +19,8 @@ data/TOY2:
 # Extraction and slicing for Segthor
 ## Number of processes for the slicing (-1: all cores), e.g. `make data/SEGTHOR PROCS=8`
 PROCS ?= -1
+SOURCE_DIR ?= data
+RETAIN ?= 10
 
 ## Full training set (40 patients)
 data/segthor_train: data/segthor_train_full.zip
@@ -29,11 +31,11 @@ data/segthor_train: data/segthor_train_full.zip
 	rm -f $@_tmp/.DS_STORE $@_tmp/train/.DS_STORE
 	mv $@_tmp $@
 
-data/SEGTHOR: data/segthor_train
+data/SEGTHOR:
 	$(info $(green)python $(CFLAGS) slice_segthor.py$(reset))
 	rm -rf $@_tmp $@
-	python $(CFLAGS) slice_segthor.py --source_dir $< --dest_dir $@_tmp \
-		--shape 256 256 --retain 10 -p $(PROCS)
+	python $(CFLAGS) slice_segthor.py --source_dir $(SOURCE_DIR) --dest_dir $@_tmp \
+		--shape 256 256 --retain $(RETAIN) -p $(PROCS)
 	mv $@_tmp $@
 
 ## Same split (same --seed/--retain), with the preprocessing of preprocessing.py
@@ -43,23 +45,23 @@ data/SEGTHOR: data/segthor_train
 HU_WINDOW := --hu_window -500 500
 SPACING := --spacing 1.5 1.5
 
-data/SEGTHOR_HU: data/segthor_train
+data/SEGTHOR_HU:
 	$(info $(green)python $(CFLAGS) slice_segthor.py$(reset))
 	rm -rf $@_tmp $@
-	python $(CFLAGS) slice_segthor.py --source_dir $< --dest_dir $@_tmp \
-		--shape 256 256 --retain 10 -p $(PROCS) $(HU_WINDOW)
+	python $(CFLAGS) slice_segthor.py --source_dir $(SOURCE_DIR) --dest_dir $@_tmp \
+		--shape 256 256 --retain $(RETAIN) -p $(PROCS) $(HU_WINDOW)
 	mv $@_tmp $@
 
-data/SEGTHOR_RESAMPLE: data/segthor_train
+data/SEGTHOR_RESAMPLE:
 	$(info $(green)python $(CFLAGS) slice_segthor.py$(reset))
 	rm -rf $@_tmp $@
-	python $(CFLAGS) slice_segthor.py --source_dir $< --dest_dir $@_tmp \
-		--shape 256 256 --retain 10 -p $(PROCS) $(SPACING)
+	python $(CFLAGS) slice_segthor.py --source_dir $(SOURCE_DIR) --dest_dir $@_tmp \
+		--shape 256 256 --retain $(RETAIN) -p $(PROCS) $(SPACING)
 	mv $@_tmp $@
 
-data/SEGTHOR_PREPROC: data/segthor_train
+data/SEGTHOR_PREPROC:
 	$(info $(green)python $(CFLAGS) slice_segthor.py$(reset))
 	rm -rf $@_tmp $@
-	python $(CFLAGS) slice_segthor.py --source_dir $< --dest_dir $@_tmp \
-		--shape 256 256 --retain 10 -p $(PROCS) $(HU_WINDOW) $(SPACING)
+	python $(CFLAGS) slice_segthor.py --source_dir $(SOURCE_DIR) --dest_dir $@_tmp \
+		--shape 256 256 --retain $(RETAIN) -p $(PROCS) $(HU_WINDOW) $(SPACING)
 	mv $@_tmp $@
