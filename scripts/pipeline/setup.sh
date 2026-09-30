@@ -1,4 +1,5 @@
 #!/usr/bin/bash
+# source this, do not run it: the venv activation below would die with the subshell
 
 # download the data manually with uva credential
 
@@ -8,7 +9,7 @@
 #make segthor_part1
 
 cd data
-ln -s ../../../archive-data/segthor_train_full/train ./
+ln -sfn ../../../archive-data/segthor_train_full/train ./
 
 cd ../
 source ../../ai4mi_project/.venv/bin/activate
