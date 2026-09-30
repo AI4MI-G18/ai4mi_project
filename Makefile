@@ -17,16 +17,49 @@ data/TOY2:
 
 
 # Extraction and slicing for Segthor
-## Original one
-data/segthor_part1: data/segthor_part1.zip
-	$(info $(yellow)unzip $<$(reset))
-	sha256sum -c data/segthor_part1.sha256
-	unzip -q $<
-	rm -f $@/.DS_STORE
+## Number of processes for the slicing (-1: all cores), e.g. `make data/SEGTHOR PROCS=8`
+PROCS ?= -1
 
-data/SEGTHOR:
+## Full training set (40 patients)
+data/segthor_train: data/segthor_train_full.zip
+	$(info $(yellow)unzip $<$(reset))
+#	sha256sum -c data/segthor_train_full.sha256
+	rm -rf $@_tmp $@
+	unzip -q $< -d $@_tmp
+	rm -f $@_tmp/.DS_STORE $@_tmp/train/.DS_STORE
+	mv $@_tmp $@
+
+data/SEGTHOR: data/segthor_train
 	$(info $(green)python $(CFLAGS) slice_segthor.py$(reset))
 	rm -rf $@_tmp $@
-	python $(CFLAGS) slice_segthor.py --source_dir data/segthor_part1 --dest_dir $@_tmp \
-		--shape 256 256 --retain 5
+	python $(CFLAGS) slice_segthor.py --source_dir $< --dest_dir $@_tmp \
+		--shape 256 256 --retain 10 -p $(PROCS)
+	mv $@_tmp $@
+
+## Same split (same --seed/--retain), with the preprocessing of preprocessing.py
+## [-500, 500] HU keeps the soft tissue organs (heart, aorta, esophagus) and the
+## air/tissue edge of the trachea, while removing the metal/contrast outliers (up to 31743 HU)
+## 1.5 mm in-plane gives a 384 mm field of view at 256x256, organs being within 147 mm of the center
+HU_WINDOW := --hu_window -500 500
+SPACING := --spacing 1.5 1.5
+
+data/SEGTHOR_HU: data/segthor_train
+	$(info $(green)python $(CFLAGS) slice_segthor.py$(reset))
+	rm -rf $@_tmp $@
+	python $(CFLAGS) slice_segthor.py --source_dir $< --dest_dir $@_tmp \
+		--shape 256 256 --retain 10 -p $(PROCS) $(HU_WINDOW)
+	mv $@_tmp $@
+
+data/SEGTHOR_RESAMPLE: data/segthor_train
+	$(info $(green)python $(CFLAGS) slice_segthor.py$(reset))
+	rm -rf $@_tmp $@
+	python $(CFLAGS) slice_segthor.py --source_dir $< --dest_dir $@_tmp \
+		--shape 256 256 --retain 10 -p $(PROCS) $(SPACING)
+	mv $@_tmp $@
+
+data/SEGTHOR_PREPROC: data/segthor_train
+	$(info $(green)python $(CFLAGS) slice_segthor.py$(reset))
+	rm -rf $@_tmp $@
+	python $(CFLAGS) slice_segthor.py --source_dir $< --dest_dir $@_tmp \
+		--shape 256 256 --retain 10 -p $(PROCS) $(HU_WINDOW) $(SPACING)
 	mv $@_tmp $@

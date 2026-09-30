@@ -22,6 +22,7 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
+import json
 import pickle
 import random
 import argparse
@@ -29,7 +30,7 @@ import warnings
 from pathlib import Path
 from functools import partial
 from multiprocessing import Pool
-from typing import Callable
+from typing import Any, Callable
 
 import numpy as np
 import nibabel as nib
@@ -37,6 +38,7 @@ from skimage.io import imsave
 from skimage.transform import resize
 
 from utils import map_, tqdm_
+from preprocessing import complete_spacing, crop_or_pad, resample, window_hu
 
 
 def norm_arr(img: np.ndarray) -> np.ndarray:
@@ -81,7 +83,9 @@ resize_: Callable = partial(resize, mode="constant", preserve_range=True, anti_a
 
 
 def slice_patient(id_: str, dest_path: Path, source_path: Path, shape: tuple[int, int],
-                  test_mode: bool = False) -> tuple[float, float, float]:
+                  test_mode: bool = False,
+                  hu_window: tuple[float, float] | None = None,
+                  spacing: tuple[float, ...] | None = None) -> tuple[tuple[float, float, float], dict[str, Any]]:
     id_path: Path = source_path / ("train" if not test_mode else "test") / id_
 
     ct_path: Path = (id_path / f"{id_}.nii.gz") if not test_mode else (source_path / "test" / f"{id_}.nii.gz")
@@ -103,14 +107,34 @@ def slice_patient(id_: str, dest_path: Path, source_path: Path, shape: tuple[int
     else:
         gt = np.zeros_like(ct, dtype=np.uint8)
 
-    norm_ct: np.ndarray = norm_arr(ct)
+    # Resampling is done on the raw HU, so the windowing below also clips any
+    # interpolation artefact
+    to_resample_ct: np.ndarray = ct
+    if spacing is not None:
+        target: tuple[float, ...] = complete_spacing(spacing, (dx, dy, dz))
+        to_resample_ct = resample(ct, (dx, dy, dz), target, is_label=False)
+        gt = resample(gt, (dx, dy, dz), target, is_label=True)
+        assert to_resample_ct.shape == gt.shape
+
+        # The crop should only remove body periphery, never the organs
+        lost: int = np.count_nonzero(gt) - np.count_nonzero(crop_or_pad(gt, shape))
+        if lost > 0:
+            print(f"[slice] Warning: {id_} loses {lost} foreground voxels when cropping to {shape}")
+
+    norm_ct: np.ndarray = window_hu(to_resample_ct, *hu_window) if hu_window is not None \
+        else norm_arr(to_resample_ct)
 
     to_slice_ct = norm_ct
     to_slice_gt = gt
 
-    for idz in range(z):
-        img_slice = resize_(to_slice_ct[:, :, idz], shape).astype(np.uint8)
-        gt_slice = resize_(to_slice_gt[:, :, idz], shape, order=0).astype(np.uint8)
+    for idz in range(to_slice_ct.shape[2]):
+        if spacing is not None:
+            # A resize would undo the resampling, so crop/pad to the network size instead
+            img_slice = crop_or_pad(to_slice_ct[:, :, idz], shape)
+            gt_slice = crop_or_pad(to_slice_gt[:, :, idz], shape)
+        else:
+            img_slice = resize_(to_slice_ct[:, :, idz], shape).astype(np.uint8)
+            gt_slice = resize_(to_slice_gt[:, :, idz], shape, order=0).astype(np.uint8)
         assert img_slice.shape == gt_slice.shape
         gt_slice *= 63
         assert gt_slice.dtype == np.uint8, gt_slice.dtype
@@ -132,7 +156,12 @@ def slice_patient(id_: str, dest_path: Path, source_path: Path, shape: tuple[int
                 warnings.filterwarnings("ignore", category=UserWarning)
                 imsave(str(save_path / filename), data)
 
-    return dx, dy, dz
+    # Everything stitch.py needs to map the slices back to the original scan
+    meta: dict[str, Any] = {"orig_shape": [x, y, z],
+                            "orig_spacing": [float(dx), float(dy), float(dz)],
+                            "resampled_shape": list(to_slice_ct.shape)}
+
+    return (dx, dy, dz), meta
 
 
 def get_splits(src_path: Path, retains: int, fold: int) -> tuple[list[str], list[str], list[str]]:
@@ -170,6 +199,10 @@ def main(args: argparse.Namespace):
     training_ids, validation_ids, test_ids = get_splits(src_path, args.retains, args.fold)
 
     resolution_dict: dict[str, tuple[float, float, float]] = {}
+    preproc_dict: dict[str, Any] = {"hu_window": args.hu_window,
+                                    "spacing": args.spacing,
+                                    "shape": args.shape,
+                                    "patients": {}}
 
     split_ids: list[str]
     for mode, split_ids in zip(["train", "val"], [training_ids, validation_ids]):
@@ -180,23 +213,30 @@ def main(args: argparse.Namespace):
                                  dest_path=dest_mode,
                                  source_path=src_path,
                                  shape=tuple(args.shape),
-                                 test_mode=mode == 'test')
-        resolutions: list[tuple[float, float, float]]
+                                 test_mode=mode == 'test',
+                                 hu_window=args.hu_window,
+                                 spacing=args.spacing)
+        results: list[tuple[tuple[float, float, float], dict[str, Any]]]
         iterator = tqdm_(split_ids)
         match args.process:
             case 1:
-                resolutions = list(map(pfun, iterator))
+                results = list(map(pfun, iterator))
             case -1:
-                resolutions = Pool().map(pfun, iterator)
+                results = Pool().map(pfun, iterator)
             case _ as p:
-                resolutions = Pool(p).map(pfun, iterator)
+                results = Pool(p).map(pfun, iterator)
 
-        for key, val in zip(split_ids, resolutions):
+        for key, (val, meta) in zip(split_ids, results):
             resolution_dict[key] = val
+            preproc_dict["patients"][key] = meta
 
     with open(dest_path / "spacing.pkl", 'wb') as f:
         pickle.dump(resolution_dict, f, pickle.HIGHEST_PROTOCOL)
         print(f"Saved spacing dictionnary to {f}")
+
+    with open(dest_path / "preprocessing.json", 'w') as f:
+        json.dump(preproc_dict, f, indent=2)
+        print(f"Saved preprocessing parameters to {f}")
 
 
 def get_args() -> argparse.Namespace:
@@ -210,7 +250,19 @@ def get_args() -> argparse.Namespace:
     parser.add_argument('--fold', type=int, default=0)
     parser.add_argument('--process', '-p', type=int, default=1,
                         help="The number of cores to use for processing")
+
+    parser.add_argument('--hu_window', type=float, nargs=2, metavar=('HU_MIN', 'HU_MAX'), default=None,
+                        help="Clip the CT to a fixed [HU_MIN, HU_MAX] window before scaling to [0, 255]. "
+                             "Default: per-volume min-max normalization.")
+    parser.add_argument('--spacing', type=float, nargs="+", metavar='MM', default=None,
+                        help="Resample the volumes to this voxel spacing (in mm), then center crop/pad the "
+                             "slices to --shape. Give 2 values (x y) to keep the original slices in z, or 3. "
+                             "Default: resize each slice to --shape, whatever its spacing.")
     args = parser.parse_args()
+
+    if args.spacing is not None and len(args.spacing) not in [2, 3]:
+        parser.error("--spacing takes 2 (x y) or 3 (x y z) values")
+
     random.seed(args.seed)
 
     print(args)

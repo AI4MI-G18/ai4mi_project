@@ -123,8 +123,7 @@ You can also create new conda environment in anaconda prompt
 
 <a id="getting-the-data"></a>
 ### Getting the data
-The synthetic dataset is generated randomly, whereas for Segthor it is required to put the file [`segthor_part1.zip`](https://amsuni-my.sharepoint.com/:u:/g/personal/h_t_g_kervadec_uva_nl/IQBJLXRY5wedSYEuofqRtuylAWiiHp2ciems5XSCu3DFMkA?e=qa3Ujf) (required a UvA account) in the `data/` folder. If the computer running it is powerful enough, the recipe for `data/SEGTHOR` can be modified in the [Makefile](Makefile) to enable multi-processing (`-p -1` option, see `python slice_segthor.py --help` or its code directly).
-Also one note on $ make data/SEGTHOR, if you run this command you will get an error, I initially got an AssertionError when running make data/SEGTHOR. After checking the contents of the data folder, I noticed that segthor_part1.zip was present, but the expected extracted folder data/segthor_part1 was missing. The solution was to extract the zip file first and then rerun make data/SEGTHOR.
+The synthetic dataset is generated randomly, whereas for Segthor it is required to put the file [`segthor_train_full.zip`](https://amsuni-my.sharepoint.com/:u:/g/personal/h_t_g_kervadec_uva_nl/IQAdjIjKmc4XRbIBQl9qeBs8AXOF-9Evw0v_lEbvLn2mUdE?e=lZev9Z) (required a UvA account) in the `data/` folder. If the computer running it is powerful enough, the recipe for `data/SEGTHOR` can be modified in the [Makefile](Makefile) to enable multi-processing (`-p -1` option, see `python slice_segthor.py --help` or its code directly).
 ```
 $ make data/segthor_part1
 $ make data/TOY2
@@ -145,6 +144,13 @@ $ python  slice_segthor.py --source_dir data/segthor_train --dest_dir data/SEGTH
          --shape 256 256 --retain 10
 $ mv data/SEGTHOR_tmp data/SEGTHOR
 ````
+
+#### Preprocessing: HU windowing and resampling
+`slice_segthor.py` has two optional preprocessing steps (implemented in [`preprocessing.py`](preprocessing.py)). Without them, the slicing is unchanged.
+* `--hu_window HU_MIN HU_MAX` clips the CT to a fixed Hounsfield window before scaling to `[0, 255]`, instead of the per-volume min-max (some scans have metal/contrast artefacts up to 31743 HU, which squash all soft tissue into a couple of grey levels).
+* `--spacing X Y [Z]` resamples the volumes to a fixed voxel spacing (mm), then centre crops/pads the slices to `--shape` (instead of resizing them). With only `X Y`, the slices along z are kept as-is.
+
+`make data/SEGTHOR_HU`, `data/SEGTHOR_RESAMPLE` and `data/SEGTHOR_PREPROC` build the same split with, respectively, `--hu_window -500 500`, `--spacing 1.5 1.5`, and both; train on them with the same name as `--dataset`. [`scripts/exp02-preprocessing.sh`](scripts/exp02-preprocessing.sh) runs the whole ablation (slicing, training, stitching, 3D DSC and HD95 with [`eval3d.py`](eval3d.py)). The parameters are saved to `data/SEGTHOR_PREPROC/preprocessing.json`, which `stitch.py` needs to map the predictions back to the original scan: add `--preprocessing data/SEGTHOR_PREPROC/preprocessing.json` to the stitching command below.
 
 <a id="training-a-base-network"></a>
 ### Training a base network
