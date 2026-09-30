@@ -77,6 +77,10 @@ datasets_params: dict[str, dict[str, Any]] = {}
 datasets_params["TOY2"] = {'K': 2, 'net': shallowCNN, 'B': 2, 'kernels': 8, 'factor': 2}
 datasets_params["SEGTHOR"] = {'K': 5, 'net': ENet, 'B': 8, 'kernels': 8, 'factor': 2}
 datasets_params["SEGTHOR_CLEAN"] = {'K': 5, 'net': ENet, 'B': 8, 'kernels': 8, 'factor': 2}
+# Preprocessing ablation, see the Makefile: HU windowing only, resampling only, both
+datasets_params["SEGTHOR_HU"] = {'K': 5, 'net': ENet, 'B': 8, 'kernels': 8, 'factor': 2}
+datasets_params["SEGTHOR_RESAMPLE"] = {'K': 5, 'net': ENet, 'B': 8, 'kernels': 8, 'factor': 2}
+datasets_params["SEGTHOR_PREPROC"] = {'K': 5, 'net': ENet, 'B': 8, 'kernels': 8, 'factor': 2}
 datasets_params["TOY2_OURS"] = {'K': 2, 'net': ENetImproved, 'B': 2, 'kernels': 8, 'factor': 2, 'root': 'TOY'}
 datasets_params["SEGTHOR_OURS"] = {'K': 5, 'net': ENetImproved, 'B': 8, 'kernels': 8, 'factor': 2, 'root': 'SEGTHOR'}
 
