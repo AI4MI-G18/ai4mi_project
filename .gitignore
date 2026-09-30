@@ -11,4 +11,6 @@ scratch/
 .DS_Store
 qc/
 
+jobs/logs
+
 projects
