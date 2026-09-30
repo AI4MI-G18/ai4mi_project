@@ -6,5 +6,9 @@ volumes/
 ai4mi/
 __pycache__/
 .idea
+analysis/
+scratch/
+.DS_Store
+qc/
 
 projects
