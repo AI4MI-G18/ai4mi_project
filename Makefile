@@ -62,5 +62,4 @@ data/SEGTHOR_PREPROC: data/segthor_train
 	rm -rf $@_tmp $@
 	python $(CFLAGS) slice_segthor.py --source_dir $< --dest_dir $@_tmp \
 		--shape 256 256 --retain 10 -p $(PROCS) $(HU_WINDOW) $(SPACING)
->>>>>>> julian/master
 	mv $@_tmp $@
