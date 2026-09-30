@@ -17,23 +17,49 @@ data/TOY2:
 
 
 # Extraction and slicing for Segthor
-data/segthor_part1: data/segthor_part1.zip
+## Number of processes for the slicing (-1: all cores), e.g. `make data/SEGTHOR PROCS=8`
+PROCS ?= -1
+
+## Full training set (40 patients)
+data/segthor_train: data/segthor_train_full.zip
 	$(info $(yellow)unzip $<$(reset))
-	sha256sum -c data/segthor_part1.sha256
-	unzip -q $<
-	rm -f $@/.DS_STORE
+#	sha256sum -c data/segthor_train_full.sha256
+	rm -rf $@_tmp $@
+	unzip -q $< -d $@_tmp
+	rm -f $@_tmp/.DS_STORE $@_tmp/train/.DS_STORE
+	mv $@_tmp $@
 
-## Recover the aorta (class 4) that part 1 merged into the esophagus label.
-## Writes GT_fixed.nii.gz beside each patient's GT.nii.gz; the stamp file exists
-## because the real outputs are spread over all 20 patient folders.
-data/.labels_fixed: data/segthor_part1 fix_label_encoding.py
-	$(info $(magenta)python $(CFLAGS) fix_label_encoding.py$(reset))
-	python $(CFLAGS) fix_label_encoding.py --source_dir data/segthor_part1
-	touch $@
-
-data/SEGTHOR: data/.labels_fixed
+data/SEGTHOR: data/segthor_train
 	$(info $(green)python $(CFLAGS) slice_segthor.py$(reset))
 	rm -rf $@_tmp $@
-	python $(CFLAGS) slice_segthor.py --source_dir data/segthor_part1 --dest_dir $@_tmp \
-		--gt_name GT_fixed.nii.gz --shape 256 256 --retain 5
+	python $(CFLAGS) slice_segthor.py --source_dir $< --dest_dir $@_tmp \
+		--shape 256 256 --retain 10 -p $(PROCS)
+	mv $@_tmp $@
+
+## Same split (same --seed/--retain), with the preprocessing of preprocessing.py
+## [-500, 500] HU keeps the soft tissue organs (heart, aorta, esophagus) and the
+## air/tissue edge of the trachea, while removing the metal/contrast outliers (up to 31743 HU)
+## 1.5 mm in-plane gives a 384 mm field of view at 256x256, organs being within 147 mm of the center
+HU_WINDOW := --hu_window -500 500
+SPACING := --spacing 1.5 1.5
+
+data/SEGTHOR_HU: data/segthor_train
+	$(info $(green)python $(CFLAGS) slice_segthor.py$(reset))
+	rm -rf $@_tmp $@
+	python $(CFLAGS) slice_segthor.py --source_dir $< --dest_dir $@_tmp \
+		--shape 256 256 --retain 10 -p $(PROCS) $(HU_WINDOW)
+	mv $@_tmp $@
+
+data/SEGTHOR_RESAMPLE: data/segthor_train
+	$(info $(green)python $(CFLAGS) slice_segthor.py$(reset))
+	rm -rf $@_tmp $@
+	python $(CFLAGS) slice_segthor.py --source_dir $< --dest_dir $@_tmp \
+		--shape 256 256 --retain 10 -p $(PROCS) $(SPACING)
+	mv $@_tmp $@
+
+data/SEGTHOR_PREPROC: data/segthor_train
+	$(info $(green)python $(CFLAGS) slice_segthor.py$(reset))
+	rm -rf $@_tmp $@
+	python $(CFLAGS) slice_segthor.py --source_dir $< --dest_dir $@_tmp \
+		--shape 256 256 --retain 10 -p $(PROCS) $(HU_WINDOW) $(SPACING)
 	mv $@_tmp $@

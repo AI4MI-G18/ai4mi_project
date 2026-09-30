@@ -23,10 +23,11 @@
 # SOFTWARE.
 
 import re
+import json
 import argparse
 from itertools import repeat
 from pathlib import Path
-from typing import Match, Pattern
+from typing import Any, Match, Pattern
 
 import numpy as np
 import nibabel as nib
@@ -34,19 +35,48 @@ from skimage.io import imread
 from skimage.transform import resize
 
 from utils import map_, tqdm_
+from preprocessing import crop_or_pad
 
 
 def get_z(image: Path) -> int:
     return int(image.stem.split('_')[-1])
 
 
-def merge_patient(id_: str, dest_folder: str, images: list[Path],
-                  idxes: list[int], K: int, source_pattern: str) -> None:
-    # print(source_pattern.format(id_=id_))
-    orig_nib = nib.load(source_pattern.format(id_=id_))
-    orig_shape = np.asarray(orig_nib.dataobj).shape
-    # print(orig_nib.affine)
+def unresample_patient(images: list[Path], idxes: list[int], K: int,
+                       orig_shape: tuple[int, int, int], meta: dict[str, Any]) -> np.ndarray:
+    """
+    Inverse of the resampling in slice_segthor.py: stack the slices in the
+    resampled space, undo the centre crop/pad, then go back to the original
+    voxel grid with nearest neighbour (labels).
+    """
+    assert list(orig_shape) == meta["orig_shape"], (orig_shape, meta["orig_shape"])
+    Xr, Yr, Zr = meta["resampled_shape"]
+    assert Zr == len(idxes), (Zr, len(idxes))
 
+    first: np.ndarray = imread(images[idxes[0]])
+    stacked: np.ndarray = np.zeros((*first.shape, Zr), dtype=np.uint8)
+    for idx in idxes:
+        img: Path = images[idx]
+        img_arr = imread(img)
+        assert img_arr.dtype == np.uint8
+        assert set(np.unique(img_arr)) <= set(range(K))
+
+        stacked[:, :, get_z(img)] = img_arr
+
+    uncropped: np.ndarray = crop_or_pad(stacked, (Xr, Yr))
+    assert uncropped.shape == (Xr, Yr, Zr), uncropped.shape
+
+    res: np.ndarray = resize(uncropped, orig_shape,
+                             mode="edge",
+                             preserve_range=True,
+                             anti_aliasing=False,
+                             order=0)
+
+    return res.astype(np.int16)
+
+
+def resize_slices(images: list[Path], idxes: list[int], K: int,
+                  orig_shape: tuple[int, int, int]) -> np.ndarray:
     X, Y, Z = orig_shape
     assert Z == len(idxes)
 
@@ -68,12 +98,31 @@ def merge_patient(id_: str, dest_folder: str, images: list[Path],
 
         res_arr[:, :, z] = resized[...]
 
+    return res_arr
+
+
+def merge_patient(id_: str, dest_folder: str, images: list[Path],
+                  idxes: list[int], K: int, source_pattern: str,
+                  preproc: dict[str, Any] | None = None) -> None:
+    # print(source_pattern.format(id_=id_))
+    orig_nib = nib.load(source_pattern.format(id_=id_))
+    orig_shape = np.asarray(orig_nib.dataobj).shape
+    # print(orig_nib.affine)
+
+    res_arr: np.ndarray
+    if preproc is not None and preproc["spacing"] is not None:
+        res_arr = unresample_patient(images, idxes, K, orig_shape, preproc["patients"][id_])
+    else:
+        res_arr = resize_slices(images, idxes, K, orig_shape)
+
     assert set(np.unique(res_arr)) <= set(range(K))
     assert orig_shape == res_arr.shape, (orig_shape, res_arr.shape)
 
     # res_arr = res_arr.astype(np.int16)
     res_arr //= 63  # For segthor only
-    assert set(np.unique(res_arr)) == set(range(5)), np.uint8(res_arr)
+    missing = set(range(5)) - set(np.unique(res_arr))
+    if missing:
+        print(f"[stitch] Warning: {id_} has no predicted voxels for class(es) {missing}")
 
     new_nib = nib.nifti1.Nifti1Image(res_arr, affine=orig_nib.affine, header=orig_nib.header)
     nib.save(new_nib, (Path(dest_folder) / id_).with_suffix(".nii.gz"))
@@ -104,8 +153,14 @@ def main(args) -> None:
 
     args.dest_folder.mkdir(parents=True, exist_ok=True)
 
+    preproc: dict[str, Any] | None = None
+    if args.preprocessing is not None:
+        with open(args.preprocessing, 'r') as f:
+            preproc = json.load(f)
+
     for p in tqdm_(unique_patients):
-        merge_patient(p, args.dest_folder, images, idx_map[p], args.num_classes, args.source_scan_pattern)
+        merge_patient(p, args.dest_folder, images, idx_map[p], args.num_classes, args.source_scan_pattern,
+                      preproc=preproc)
     # mmap_(lambda p: merge_patient(p, args.dest_folder, images, idx_map[p], K=args.num_classes), patients)
 
 
@@ -119,6 +174,9 @@ def get_args() -> argparse.Namespace:
     parser.add_argument('--grp_regex', type=str, required=True)
 
     parser.add_argument('--num_classes', type=int, default=4)
+    parser.add_argument('--preprocessing', type=Path, default=None,
+                        help="The preprocessing.json written by slice_segthor.py (e.g. data/SEGTHOR_PREPROC/"
+                             "preprocessing.json). Required to undo the resampling, if any was used.")
 
     args = parser.parse_args()
 

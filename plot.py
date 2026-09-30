@@ -31,6 +31,8 @@ import matplotlib.pyplot as plt
 
 def run(args: argparse.Namespace) -> None:
     metrics: np.ndarray = np.load(args.metric_file)
+    if args.epochs is not None:
+        metrics = metrics[:args.epochs]
     match metrics.ndim:
         case 2:
             E, N = metrics.shape
@@ -68,6 +70,8 @@ def get_args() -> argparse.Namespace:
                         help="The metric file to plot.")
     parser.add_argument('--dest', type=Path, metavar="METRIC_MODE.png",
                         help="Optional: save the plot to a .png file")
+    parser.add_argument('--epochs', type=int, default=None,
+                        help="Optional: only plot the first EPOCHS epochs")
     parser.add_argument("--headless", action="store_true",
                         help="Does not display the plot and save it directly (implies --dest to be provided.")
 

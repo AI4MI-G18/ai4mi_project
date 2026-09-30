@@ -8,5 +8,6 @@ __pycache__/
 analysis/
 scratch/
 .DS_Store
+qc/
 
 projects

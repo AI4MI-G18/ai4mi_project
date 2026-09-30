@@ -42,6 +42,7 @@ from functools import partial
 from dataset import SliceDataset
 from ShallowNet import shallowCNN
 from ENet import ENet
+from ENetOurs import ENetImproved
 from utils import (Dcm,
                    class2one_hot,
                    probs2one_hot,
@@ -50,7 +51,15 @@ from utils import (Dcm,
                    dice_coef,
                    save_images)
 
-from losses import (CrossEntropy, DiceLoss, CrossEntropyAndDice)
+from losses import (CrossEntropy, SoftDiceLoss, DiceCELoss, DiceTopKLoss, DiceFocalLoss)
+
+losses = {
+    'CE': CrossEntropy,
+    'Dice': SoftDiceLoss,
+    'DiceCE': DiceCELoss,
+    'DiceTopK': DiceTopKLoss,
+    'DiceFocal': DiceFocalLoss
+}
 
 datasets_params: dict[str, dict[str, Any]] = {}
 # K for the number of classes
@@ -58,6 +67,12 @@ datasets_params: dict[str, dict[str, Any]] = {}
 datasets_params["TOY2"] = {'K': 2, 'net': shallowCNN, 'B': 2, 'kernels': 8, 'factor': 2}
 datasets_params["SEGTHOR"] = {'K': 5, 'net': ENet, 'B': 8, 'kernels': 8, 'factor': 2}
 datasets_params["SEGTHOR_CLEAN"] = {'K': 5, 'net': ENet, 'B': 8, 'kernels': 8, 'factor': 2}
+# Preprocessing ablation, see the Makefile: HU windowing only, resampling only, both
+datasets_params["SEGTHOR_HU"] = {'K': 5, 'net': ENet, 'B': 8, 'kernels': 8, 'factor': 2}
+datasets_params["SEGTHOR_RESAMPLE"] = {'K': 5, 'net': ENet, 'B': 8, 'kernels': 8, 'factor': 2}
+datasets_params["SEGTHOR_PREPROC"] = {'K': 5, 'net': ENet, 'B': 8, 'kernels': 8, 'factor': 2}
+datasets_params["TOY2_OURS"] = {'K': 2, 'net': ENetImproved, 'B': 2, 'kernels': 8, 'factor': 2, 'root': 'TOY'}
+datasets_params["SEGTHOR_OURS"] = {'K': 5, 'net': ENetImproved, 'B': 8, 'kernels': 8, 'factor': 2, 'root': 'SEGTHOR'}
 
 def img_transform(img):
         img = img.convert('L')
@@ -79,18 +94,16 @@ def gt_transform(K, img):
 
 def setup(args) -> tuple[nn.Module, Any, Any, DataLoader, DataLoader, int]:
     # Networks and scheduler
-    if args.gpu and torch.cuda.is_available():
-         device = torch.device("cuda")
-    elif args.gpu and torch.backends.mps.is_available():
-        device = torch.device("mps")
-    else:
-        device = torch.device("cpu")
+    gpu: bool = args.gpu and torch.cuda.is_available()
+    mps: bool = args.mps and torch.backends.mps.is_available()
+    device = torch.device("cuda") if gpu else torch.device('mps') if mps else torch.device("cpu")
     print(f">> Picked {device} to run experiments")
 
     K: int = datasets_params[args.dataset]['K']
     kernels: int = datasets_params[args.dataset]['kernels'] if 'kernels' in datasets_params[args.dataset] else 8
     factor: int = datasets_params[args.dataset]['factor'] if 'factor' in datasets_params[args.dataset] else 2
-    net = datasets_params[args.dataset]['net'](1, K, kernels=kernels, factor=factor)
+    net = datasets_params[args.dataset]['net'](1, K, **{k: v for k, v in datasets_params[args.dataset].items()
+                                                        if k not in ('K', 'net', 'B', 'root')})
     net.init_weights()
     net.to(device)
 
@@ -99,7 +112,7 @@ def setup(args) -> tuple[nn.Module, Any, Any, DataLoader, DataLoader, int]:
 
     # Dataset part
     B: int = datasets_params[args.dataset]['B']
-    root_dir = Path("data") / args.dataset
+    root_dir = Path("data") / datasets_params[args.dataset].get('root', args.dataset)
 
 
 
@@ -128,30 +141,29 @@ def setup(args) -> tuple[nn.Module, Any, Any, DataLoader, DataLoader, int]:
     return (net, optimizer, device, train_loader, val_loader, K)
 
 
+def set_seed(seed: int):
+    import random, numpy, torch
+
+    random.seed(seed)
+    numpy.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+
+
 def runTraining(args):
-    print(f">>> Setting up to train on {args.dataset} with {args.mode}")
+    set_seed(args.seed)
+    print(f">>> Setting up to train on {args.dataset} with {args.mode} and {args.loss}")
     net, optimizer, device, train_loader, val_loader, K = setup(args)
 
     if args.mode == "full":
-        idk = list(range(K))
+        idk = list(range(K))  # Supervise both background and foreground
     elif args.mode in ["partial"] and args.dataset == 'SEGTHOR':
         idk = [0, 1, 3, 4]  # Do not supervise the heart (class 2)
     else:
         raise ValueError(args.mode, args.dataset)
+    
+    loss_fn = losses[args.loss](idk=idk)
 
-    dice_idk = [k for k in idk if k != 0]
-
-    match args.loss:
-        case "ce":
-            loss_fn = CrossEntropy(idk=idk)
-        case "dice":
-            loss_fn = DiceLoss(idk=dice_idk, batch_dice=args.batch_dice)
-        case "ce+dice":
-            loss_fn = CrossEntropyAndDice(idk=idk, dice_idk=dice_idk,
-                                        alpha=1.0, beta=args.dice_weight,
-                                        batch_dice=args.batch_dice)
-        case _ as l:
-            raise ValueError(l)
     # Notice one has the length of the _loader_, and the other one of the _dataset_
     log_loss_tra: Tensor = torch.zeros((args.epochs, len(train_loader)))
     log_dice_tra: Tensor = torch.zeros((args.epochs, len(train_loader.dataset), K))
@@ -252,22 +264,20 @@ def runTraining(args):
 def main():
     parser = argparse.ArgumentParser()
 
+    parser.add_argument('--seed', default=0, type=int)
     parser.add_argument('--epochs', default=20, type=int)
     parser.add_argument('--dataset', default='TOY2', choices=datasets_params.keys())
     parser.add_argument('--mode', default='full', choices=['partial', 'full'])
+    parser.add_argument('--loss', default='CE', choices=losses.keys())
     parser.add_argument('--dest', type=Path, required=True,
                         help="Destination directory to save the results (predictions and weights).")
 
-    parser.add_argument('--loss', default='ce', choices=['ce', 'dice', 'ce+dice'],
-                        help="Training objective. 'ce+dice' is nnU-Net's fixed choice.")
-    parser.add_argument('--dice_weight', default=1.0, type=float,
-                        help="Weight on the Dice term of 'ce+dice'.")
-    parser.add_argument('--batch_dice', action=argparse.BooleanOptionalAction, default=True,
-                        help="Pool Dice over the batch instead of scoring each slice alone.")
     parser.add_argument('--gpu', action='store_true')
+    parser.add_argument('--mps', action='store_true')
     parser.add_argument('--debug', action='store_true',
                         help="Keep only a fraction (10 samples) of the datasets, "
                              "to test the logics around epochs and logging easily.")
+
 
     args = parser.parse_args()
 
