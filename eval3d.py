@@ -127,7 +127,7 @@ def get_args() -> argparse.Namespace:
     parser.add_argument('--pred_folder', type=Path, required=True,
                         help="Folder with the stitched Patient_XX.nii.gz predictions")
     parser.add_argument('--gt_pattern', type=str, required=True,
-                        help="Pattern to the ground truth, e.g. data/segthor_train/train/{id_}/GT.nii.gz")
+                        help="Pattern to the ground truth, e.g. data/train/{id_}/GT.nii.gz")
     parser.add_argument('--dest', type=Path, required=True, help="The .npz file to save the 3D DSC to")
     parser.add_argument('--hd95_dest', type=Path, default=None,
                         help="The .npz file to save the HD95 to. Default: hd95_val.npz next to --dest")
