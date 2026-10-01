@@ -30,6 +30,7 @@ from typing import Callable, Iterable, List, Set, Tuple, TypeVar, cast
 
 import torch
 import numpy as np
+import torch.nn.functional as F
 from PIL import Image
 from tqdm import tqdm
 from torch import Tensor, einsum
@@ -122,6 +123,31 @@ def probs2one_hot(probs: Tensor) -> Tensor:
     assert one_hot(res)
 
     return res
+
+
+def sliding_window_z(net: torch.nn.Module, img: Tensor, depth: int) -> Tensor:
+    """
+    The probabilities for whole volumes (b, c, w, h, d), from a 3D network trained on patches
+    of `depth` slices: it is run on windows of that depth, half overlapping, and the
+    probabilities are averaged where the windows overlap. The windows are whole in-plane.
+    """
+    D: int = img.shape[-1]
+    assert D >= depth, (D, depth)
+
+    starts: list[int] = sorted(set(range(0, D - depth, depth // 2)) | {D - depth})
+
+    probs: Tensor | None = None
+    counts: Tensor = torch.zeros(D, device=img.device)
+    for z in starts:
+        window_probs: Tensor = F.softmax(net(img[..., z:z + depth]), dim=1)
+        if probs is None:
+            b, K, w, h, _ = window_probs.shape
+            probs = torch.zeros((b, K, w, h, D), device=img.device)
+        probs[..., z:z + depth] += window_probs
+        counts[z:z + depth] += 1
+
+    assert probs is not None and (counts > 0).all()
+    return probs / counts
 
 
 # Save the raw predictions
