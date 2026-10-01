@@ -47,7 +47,7 @@ class CrossEntropy():
     def __call__(self, pred_softmax, weak_target):
         _, target, log_p = self._prepare_inputs(pred_softmax, weak_target)
 
-        loss = - einsum("bkwh,bkwh->", target, log_p)
+        loss = - einsum("bk...,bk...->", target, log_p)
         loss /= target.sum() + 1e-10
 
         return loss
@@ -88,7 +88,7 @@ class FocalLoss(CrossEntropy):
         pred, target, log_p = self._prepare_inputs(pred_softmax, weak_target)
         
         focal_factor = (1 - pred).pow(self.gamma)
-        loss = -einsum("bkwh,bkwh->", target * focal_factor, log_p)
+        loss = -einsum("bk...,bk...->", target * focal_factor, log_p)
         loss /= target.sum() + 1e-10
 
         return loss

@@ -3,6 +3,7 @@
 #   ./scripts/00-run-pipeline.sh ENet DiceCE
 #   EPOCHS=25 ./scripts/00-run-pipeline.sh ENetImproved Focal
 #   DATASET=SEGTHOR ./scripts/00-run-pipeline.sh ENet CE      # no preprocessing
+#   EPOCHS=25 ./scripts/00-run-pipeline.sh UNet25D DiceCE     # or UNet (2D), UNet3D
 #
 # DATASET picks how the data was prepared, and is the point of this branch:
 #   SEGTHOR            slice only                     (the baseline to beat)

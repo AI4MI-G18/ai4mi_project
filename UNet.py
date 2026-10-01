@@ -27,27 +27,45 @@ U-Net (Ronneberger et al., 2015), in the variants main.py can train:
 * UNet25D: the same 2D network, fed the slice and its neighbours in z as input
            channels. It still predicts the centre slice only, so everything
            downstream of main.py (stitch.py, eval3d.py) is left untouched.
+* UNet3D:  3D convolutions, trained on patches of the volumes (3D U-Net, Cicek
+           et al., 2016).
 
-main.py reads the `context` class attribute to know what data a network wants.
+main.py reads the `context` and `ndim` class attributes to know what data a
+network wants.
 """
+
+from typing import Any
+from functools import partial
 
 import torch
 import torch.nn as nn
 from torch import Tensor
 
 
-def double_conv(in_dim: int, out_dim: int) -> nn.Sequential:
+# The layers of the 2D and of the 3D network. InstanceNorm in 3D: the batches are too
+# small (2 patches) for the statistics of BatchNorm
+layers: dict[int, dict[str, Any]] = {
+    2: {'conv': nn.Conv2d, 'norm': nn.BatchNorm2d, 'pool': nn.MaxPool2d, 'up': nn.ConvTranspose2d},
+    3: {'conv': nn.Conv3d, 'norm': partial(nn.InstanceNorm3d, affine=True), 'pool': nn.MaxPool3d,
+        'up': nn.ConvTranspose3d},
+}
+
+
+def double_conv(in_dim: int, out_dim: int, ndim: int) -> nn.Sequential:
+    conv, norm = layers[ndim]['conv'], layers[ndim]['norm']
+
     return nn.Sequential(
-        nn.Conv2d(in_dim, out_dim, kernel_size=3, padding=1, bias=False),
-        nn.BatchNorm2d(out_dim),
+        conv(in_dim, out_dim, kernel_size=3, padding=1, bias=False),
+        norm(out_dim),
         nn.ReLU(inplace=True),
-        nn.Conv2d(out_dim, out_dim, kernel_size=3, padding=1, bias=False),
-        nn.BatchNorm2d(out_dim),
+        conv(out_dim, out_dim, kernel_size=3, padding=1, bias=False),
+        norm(out_dim),
         nn.ReLU(inplace=True)
     )
 
 
 class UNet(nn.Module):
+    ndim: int = 2  # 2D convolutions on slices, or 3D ones on volumes
     context: int = 0  # Neighbouring slices taken on each side, as extra input channels
     depth: int = 4  # Number of downsamplings
     width: int = 32  # Kernels of the first level, doubled at each downsampling
@@ -61,20 +79,20 @@ class UNet(nn.Module):
         self.encoders = nn.ModuleList()
         prev: int = in_dim * (2 * self.context + 1)
         for w in widths[:-1]:
-            self.encoders.append(double_conv(prev, w))
+            self.encoders.append(double_conv(prev, w, self.ndim))
             prev = w
-        self.pool = nn.MaxPool2d(2)
-        self.bottleneck = double_conv(prev, widths[-1])
+        self.pool = layers[self.ndim]['pool'](2)
+        self.bottleneck = double_conv(prev, widths[-1], self.ndim)
 
         self.ups = nn.ModuleList()
         self.decoders = nn.ModuleList()
         prev = widths[-1]
         for w in reversed(widths[:-1]):
-            self.ups.append(nn.ConvTranspose2d(prev, w, kernel_size=2, stride=2))
-            self.decoders.append(double_conv(2 * w, w))  # 2 * w: the skip connection is concatenated
+            self.ups.append(layers[self.ndim]['up'](prev, w, kernel_size=2, stride=2))
+            self.decoders.append(double_conv(2 * w, w, self.ndim))  # 2 * w: the skip connection is concatenated
             prev = w
 
-        self.final = nn.Conv2d(prev, out_dim, kernel_size=1)
+        self.final = layers[self.ndim]['conv'](prev, out_dim, kernel_size=1)
 
         print(f"Initialized {self.__class__.__name__} succesfully")
 
@@ -97,7 +115,7 @@ class UNet(nn.Module):
 
     def init_weights(self, *args, **kwargs):
         for m in self.modules():
-            if isinstance(m, (nn.Conv2d, nn.ConvTranspose2d)):
+            if isinstance(m, (nn.Conv2d, nn.ConvTranspose2d, nn.Conv3d, nn.ConvTranspose3d)):
                 nn.init.kaiming_normal_(m.weight, nonlinearity='relu')
                 if m.bias is not None:
                     nn.init.zeros_(m.bias)
@@ -105,3 +123,8 @@ class UNet(nn.Module):
 
 class UNet25D(UNet):
     context: int = 2  # 5 slices: with 2 to 3.7 mm between slices, that is 1 to 1.5 cm of context in z
+
+
+class UNet3D(UNet):
+    ndim: int = 3
+    depth: int = 3  # 64 slices in a patch: 8 are left after 3 downsamplings

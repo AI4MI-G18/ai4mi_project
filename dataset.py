@@ -30,6 +30,8 @@ from torch import Tensor
 from PIL import Image
 from torch.utils.data import Dataset
 
+from utils import class2one_hot
+
 
 def make_dataset(root, subset) -> list[tuple[Path, Path | None]]:
     assert subset in ['train', 'val', 'test']
@@ -110,3 +112,80 @@ class SliceDataset(Dataset):
             data_dict["gts"] = gt
 
         return data_dict
+
+
+class VolumeDataset(Dataset):
+    """
+    The 3D counterpart of SliceDataset, on the same sliced data: the slices of a scan are
+    stacked back into its volume, so that a 3D network gets the same split and the same
+    preprocessing as the 2D ones.
+
+    * train: random patches, `samples_per_volume` of them per scan in an epoch. Half of them
+             are centred on an organ voxel: the organs are a few percents of a scan, and
+             patches drawn uniformly would mostly be background.
+    * val:   the whole volumes. They differ in depth, so use a batch size of 1.
+    """
+    def __init__(self, subset, root_dir, img_transform, gt_transform,
+                 patch: tuple[int, int, int], samples_per_volume: int = 32, debug=False):
+        assert subset in ['train', 'val']
+        self.train_mode: bool = subset == 'train'
+        self.patch: Tensor = torch.tensor(patch)
+        self.samples_per_volume: int = samples_per_volume
+
+        scans: dict[str, list[tuple[Path, Path]]] = {}
+        for img_path, gt_path in make_dataset(root_dir, subset):
+            scans.setdefault(img_path.stem.rsplit('_', 1)[0], []).append((img_path, gt_path))
+        if debug:
+            scans = dict(list(scans.items())[:2])
+            self.samples_per_volume = 2
+
+        self.stems: list[str] = []
+        self.imgs: list[Tensor] = []  # (1, W, H, D), float
+        self.gts: list[Tensor] = []  # (W, H, D), the classes: 5 times smaller in memory than one-hot
+        self.foregrounds: list[Tensor] = []  # (N, 3), the coordinates of the organ voxels
+        for stem, files in scans.items():
+            # No missing slice, and in order: z is then the index in the stack
+            assert [int(i.stem.rsplit('_', 1)[1]) for i, _ in files] == list(range(len(files))), stem
+            assert all(i.stem == g.stem for i, g in files), stem
+
+            gt: Tensor = torch.stack([gt_transform(Image.open(g)) for _, g in files], dim=-1)
+            self.K: int = gt.shape[0]
+            self.stems.append(stem)
+            self.imgs.append(torch.stack([img_transform(Image.open(i)) for i, _ in files], dim=-1))
+            self.gts.append(gt.argmax(dim=0).type(torch.uint8))
+            self.foregrounds.append(torch.nonzero(self.gts[-1]))
+
+            assert self.imgs[-1].shape[1:] == self.gts[-1].shape
+            assert (torch.tensor(self.gts[-1].shape) >= self.patch).all(), (stem, self.gts[-1].shape, patch)
+
+        print(f">> Created {subset} dataset with {len(self.stems)} volumes"
+              + (f", {len(self)} patches per epoch..." if self.train_mode else "..."))
+
+    def __len__(self):
+        return len(self.stems) * self.samples_per_volume if self.train_mode else len(self.stems)
+
+    def __getitem__(self, index) -> dict[str, Union[Tensor, int, str]]:
+        scan: int = index % len(self.stems)
+        img: Tensor = self.imgs[scan]
+        gt: Tensor = self.gts[scan]
+
+        if self.train_mode:
+            # The highest corner a patch can have and still be inside the volume
+            max_corner: Tensor = torch.tensor(gt.shape) - self.patch
+            fg: Tensor = self.foregrounds[scan]
+
+            corner: Tensor
+            if len(fg) and torch.rand(1).item() < 0.5:
+                centre: Tensor = fg[torch.randint(len(fg), (1,)).item()]
+                corner = torch.minimum((centre - self.patch // 2).clamp(min=0), max_corner)
+            else:
+                corner = (torch.rand(3) * (max_corner + 1)).long()
+
+            x, y, z = corner.tolist()
+            w, h, d = self.patch.tolist()
+            img = img[:, x:x + w, y:y + h, z:z + d]
+            gt = gt[x:x + w, y:y + h, z:z + d]
+
+        return {"images": img,
+                "gts": class2one_hot(gt[None, ...].long(), K=self.K)[0],
+                "stems": self.stems[scan]}

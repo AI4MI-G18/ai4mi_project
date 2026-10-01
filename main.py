@@ -39,18 +39,19 @@ from torch.utils.data import DataLoader
 
 from functools import partial 
 
-from dataset import SliceDataset
+from dataset import SliceDataset, VolumeDataset
 from ShallowNet import shallowCNN
 from ENet import ENet
 from ENetOurs import ENetImproved
-from UNet import UNet, UNet25D
+from UNet import UNet, UNet25D, UNet3D
 from utils import (Dcm,
                    class2one_hot,
                    probs2one_hot,
                    probs2class,
                    tqdm_,
                    dice_coef,
-                   save_images)
+                   save_images,
+                   sliding_window_z)
 
 from losses import (CrossEntropy, TopKCrossEntropy, FocalLoss,
                     SoftDiceLoss, DiceCELoss, DiceTopKLoss, DiceFocalLoss)
@@ -72,6 +73,7 @@ architectures = {
     'shallowCNN': shallowCNN,
     'UNet': UNet,
     'UNet25D': UNet25D,
+    'UNet3D': UNet3D,
 }
 
 datasets_params: dict[str, dict[str, Any]] = {}
@@ -134,25 +136,46 @@ def setup(args) -> tuple[nn.Module, Any, Any, DataLoader, DataLoader, int]:
 
 
 
-    train_set = SliceDataset('train',
-                             root_dir,
-                             img_transform=img_transform,
-                             gt_transform= partial(gt_transform, K),
-                             debug=args.debug,
-                             context=context)
+    train_set: SliceDataset | VolumeDataset
+    val_set: SliceDataset | VolumeDataset
+    B_val: int = B
+    if getattr(net_class, 'ndim', 2) == 3:
+        # Patches of the volumes for training, and the whole volumes for validation:
+        # one at a time, as they do not have the same depth
+        B, B_val = 2, 1
+        train_set = VolumeDataset('train',
+                                  root_dir,
+                                  img_transform=img_transform,
+                                  gt_transform=partial(gt_transform, K),
+                                  patch=tuple(args.patch),
+                                  samples_per_volume=args.samples_per_volume,
+                                  debug=args.debug)
+        val_set = VolumeDataset('val',
+                                root_dir,
+                                img_transform=img_transform,
+                                gt_transform=partial(gt_transform, K),
+                                patch=tuple(args.patch),
+                                debug=args.debug)
+    else:
+        train_set = SliceDataset('train',
+                                 root_dir,
+                                 img_transform=img_transform,
+                                 gt_transform= partial(gt_transform, K),
+                                 debug=args.debug,
+                                 context=context)
+        val_set = SliceDataset('val',
+                               root_dir,
+                               img_transform=img_transform,
+                               gt_transform=partial(gt_transform, K),
+                               debug=args.debug,
+                               context=context)
+
     train_loader = DataLoader(train_set,
                               batch_size=B,
                               num_workers=5,
                               shuffle=True)
-
-    val_set = SliceDataset('val',
-                           root_dir,
-                           img_transform=img_transform,
-                           gt_transform=partial(gt_transform, K),
-                           debug=args.debug,
-                           context=context)
     val_loader = DataLoader(val_set,
-                            batch_size=B,
+                            batch_size=B_val,
                             num_workers=5,
                             shuffle=False)
 
@@ -224,10 +247,15 @@ def runTraining(args):
 
                     # Sanity tests to see we loaded and encoded the data correctly
                     assert 0 <= img.min() and img.max() <= 1
-                    B, _, W, H = img.shape
+                    B = img.shape[0]
+                    volumes: bool = img.ndim == 5  # (B, 1, W, H, D), from the VolumeDataset
 
-                    pred_logits = net(img)
-                    pred_probs = F.softmax(1 * pred_logits, dim=1)  # 1 is the temperature parameter
+                    if volumes and m == 'val':
+                        # A whole volume, for a network trained on patches of it
+                        pred_probs = sliding_window_z(net, img, args.patch[2])
+                    else:
+                        pred_logits = net(img)
+                        pred_probs = F.softmax(1 * pred_logits, dim=1)  # 1 is the temperature parameter
 
                     # Metrics computation, not used for training
                     pred_seg = probs2one_hot(pred_probs)
@@ -245,8 +273,16 @@ def runTraining(args):
                             warnings.filterwarnings('ignore', category=UserWarning)
                             predicted_class: Tensor = probs2class(pred_probs)
                             mult: int = 63 if K == 5 else (255 / (K - 1))
+                            stems: list[str] = data['stems']
+                            if volumes:
+                                # One image per slice, named as the 2D networks do: stitch.py
+                                # then does not have to know where they come from
+                                assert B == 1
+                                D: int = predicted_class.shape[-1]
+                                predicted_class = predicted_class[0].permute(2, 0, 1)
+                                stems = [f"{stems[0]}_{z:04d}" for z in range(D)]
                             save_images(predicted_class * mult,
-                                        data['stems'],
+                                        stems,
                                         args.dest / f"iter{e:03d}" / m)
 
                     j += B  # Keep in mind that _in theory_, each batch might have a different size
@@ -291,6 +327,11 @@ def main():
     parser.add_argument('--loss', default='CE', choices=losses.keys())
     parser.add_argument('--arch', default=None, choices=architectures.keys(),
                         help="Network to train. Default: the dataset's own choice.")
+    parser.add_argument('--patch', type=int, nargs=3, default=[128, 128, 64], metavar=('W', 'H', 'D'),
+                        help="3D networks only: the size of the training patches. The validation "
+                             "slides a window of D slices over the whole volumes.")
+    parser.add_argument('--samples_per_volume', type=int, default=32,
+                        help="3D networks only: the number of patches per scan in an epoch.")
     parser.add_argument('--dest', type=Path, required=True,
                         help="Destination directory to save the results (predictions and weights).")
 
