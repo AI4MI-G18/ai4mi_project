@@ -1,0 +1,107 @@
+#!/usr/bin/env python3
+
+# MIT License
+
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
+"""
+U-Net (Ronneberger et al., 2015), in the variants main.py can train:
+
+* UNet:    2D, one slice in, its segmentation out.
+* UNet25D: the same 2D network, fed the slice and its neighbours in z as input
+           channels. It still predicts the centre slice only, so everything
+           downstream of main.py (stitch.py, eval3d.py) is left untouched.
+
+main.py reads the `context` class attribute to know what data a network wants.
+"""
+
+import torch
+import torch.nn as nn
+from torch import Tensor
+
+
+def double_conv(in_dim: int, out_dim: int) -> nn.Sequential:
+    return nn.Sequential(
+        nn.Conv2d(in_dim, out_dim, kernel_size=3, padding=1, bias=False),
+        nn.BatchNorm2d(out_dim),
+        nn.ReLU(inplace=True),
+        nn.Conv2d(out_dim, out_dim, kernel_size=3, padding=1, bias=False),
+        nn.BatchNorm2d(out_dim),
+        nn.ReLU(inplace=True)
+    )
+
+
+class UNet(nn.Module):
+    context: int = 0  # Neighbouring slices taken on each side, as extra input channels
+    depth: int = 4  # Number of downsamplings
+    width: int = 32  # Kernels of the first level, doubled at each downsampling
+
+    def __init__(self, in_dim: int, out_dim: int, **kwargs):
+        # **kwargs discards the keyword arguments of ENet (kernels, factor)
+        super().__init__()
+
+        widths: list[int] = [self.width * 2**i for i in range(self.depth + 1)]
+
+        self.encoders = nn.ModuleList()
+        prev: int = in_dim * (2 * self.context + 1)
+        for w in widths[:-1]:
+            self.encoders.append(double_conv(prev, w))
+            prev = w
+        self.pool = nn.MaxPool2d(2)
+        self.bottleneck = double_conv(prev, widths[-1])
+
+        self.ups = nn.ModuleList()
+        self.decoders = nn.ModuleList()
+        prev = widths[-1]
+        for w in reversed(widths[:-1]):
+            self.ups.append(nn.ConvTranspose2d(prev, w, kernel_size=2, stride=2))
+            self.decoders.append(double_conv(2 * w, w))  # 2 * w: the skip connection is concatenated
+            prev = w
+
+        self.final = nn.Conv2d(prev, out_dim, kernel_size=1)
+
+        print(f"Initialized {self.__class__.__name__} succesfully")
+
+    def forward(self, input: Tensor) -> Tensor:
+        assert all(s % 2**self.depth == 0 for s in input.shape[2:]), (input.shape, self.depth)
+
+        skips: list[Tensor] = []
+        x = input
+        for encoder in self.encoders:
+            x = encoder(x)
+            skips.append(x)
+            x = self.pool(x)
+
+        x = self.bottleneck(x)
+
+        for up, decoder, skip in zip(self.ups, self.decoders, reversed(skips)):
+            x = decoder(torch.cat([up(x), skip], dim=1))
+
+        return self.final(x)
+
+    def init_weights(self, *args, **kwargs):
+        for m in self.modules():
+            if isinstance(m, (nn.Conv2d, nn.ConvTranspose2d)):
+                nn.init.kaiming_normal_(m.weight, nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+
+
+class UNet25D(UNet):
+    context: int = 2  # 5 slices: with 2 to 3.7 mm between slices, that is 1 to 1.5 cm of context in z

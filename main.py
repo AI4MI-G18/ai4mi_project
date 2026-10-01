@@ -43,6 +43,7 @@ from dataset import SliceDataset
 from ShallowNet import shallowCNN
 from ENet import ENet
 from ENetOurs import ENetImproved
+from UNet import UNet, UNet25D
 from utils import (Dcm,
                    class2one_hot,
                    probs2one_hot,
@@ -69,6 +70,8 @@ architectures = {
     'ENet': ENet,
     'ENetImproved': ENetImproved,
     'shallowCNN': shallowCNN,
+    'UNet': UNet,
+    'UNet25D': UNet25D,
 }
 
 datasets_params: dict[str, dict[str, Any]] = {}
@@ -119,6 +122,9 @@ def setup(args) -> tuple[nn.Module, Any, Any, DataLoader, DataLoader, int]:
     net.init_weights()
     net.to(device)
 
+    # Slices before and after the one to segment, that the network wants as input channels (2.5D)
+    context: int = getattr(net_class, 'context', 0)
+
     lr = 0.0005
     optimizer = torch.optim.Adam(net.parameters(), lr=lr, betas=(0.9, 0.999))
 
@@ -132,7 +138,8 @@ def setup(args) -> tuple[nn.Module, Any, Any, DataLoader, DataLoader, int]:
                              root_dir,
                              img_transform=img_transform,
                              gt_transform= partial(gt_transform, K),
-                             debug=args.debug)
+                             debug=args.debug,
+                             context=context)
     train_loader = DataLoader(train_set,
                               batch_size=B,
                               num_workers=5,
@@ -142,7 +149,8 @@ def setup(args) -> tuple[nn.Module, Any, Any, DataLoader, DataLoader, int]:
                            root_dir,
                            img_transform=img_transform,
                            gt_transform=partial(gt_transform, K),
-                           debug=args.debug)
+                           debug=args.debug,
+                           context=context)
     val_loader = DataLoader(val_set,
                             batch_size=B,
                             num_workers=5,

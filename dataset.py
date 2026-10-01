@@ -25,6 +25,7 @@
 from pathlib import Path
 from typing import Callable, Union
 
+import torch
 from torch import Tensor
 from PIL import Image
 from torch.utils.data import Dataset
@@ -51,12 +52,15 @@ def make_dataset(root, subset) -> list[tuple[Path, Path | None]]:
 
 class SliceDataset(Dataset):
     def __init__(self, subset, root_dir, img_transform=None,
-                 gt_transform=None, augment=False, equalize=False, debug=False):
+                 gt_transform=None, augment=False, equalize=False, debug=False,
+                 context: int = 0):
         self.root_dir: str = root_dir
         self.img_transform: Callable = img_transform
         self.gt_transform: Callable = gt_transform
         self.augmentation: bool = augment
         self.equalize: bool = equalize
+        # 2.5D: the `context` slices before and after are stacked as channels around the slice
+        self.context: int = context
 
         self.test_mode: bool = subset == 'test'
 
@@ -69,10 +73,29 @@ class SliceDataset(Dataset):
     def __len__(self):
         return len(self.files)
 
+    def neighbour(self, index: int, offset: int) -> Path:
+        """
+        The slice `offset` further in z, from the same scan. The files are sorted, so that is
+        `offset` further in the list; past the first or last slice of the scan, that slice is
+        repeated instead of reading into the next patient.
+        """
+        scan: str = self.files[index][0].stem.rsplit('_', 1)[0]
+
+        step: int = 1 if offset > 0 else -1
+        for _ in range(abs(offset)):
+            if not 0 <= index + step < len(self.files):
+                break
+            if self.files[index + step][0].stem.rsplit('_', 1)[0] != scan:
+                break
+            index += step
+
+        return self.files[index][0]
+
     def __getitem__(self, index) -> dict[str, Union[Tensor, int, str]]:
         img_path, gt_path = self.files[index]
 
-        img: Tensor = self.img_transform(Image.open(img_path))
+        img: Tensor = torch.cat([self.img_transform(Image.open(self.neighbour(index, o)))
+                                 for o in range(-self.context, self.context + 1)])
 
         data_dict = {"images": img,
                      "stems": img_path.stem}
