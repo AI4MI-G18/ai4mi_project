@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-"""Plot validation-loss curves for the available loss functions."""
+"""Plot the training and validation loss curves of one experiment."""
 
 import argparse
 from pathlib import Path
@@ -9,22 +9,19 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
-LOSS_FOLDERS = {
-    "CE": "ce",
-    "Dice": "dice",
-    "Dice + CE": "dicece",
-    "Dice + TopK CE": "DiceTopK",
-    "Dice + Focal": "DiceFocal",
+LOSS_FILES = {
+    "Training": "loss_tra.npy",
+    "Validation": "loss_val.npy",
 }
 
 
-def load_validation_losses(results_dir: Path) -> dict[str, np.ndarray]:
-    """Load and average validation-batch losses for every epoch."""
+def load_losses(results_dir: Path) -> dict[str, np.ndarray]:
+    """Load and average the batch losses for every epoch."""
     losses = {}
     missing = []
 
-    for label, folder in LOSS_FOLDERS.items():
-        loss_file = results_dir / folder / "loss_val.npy"
+    for label, filename in LOSS_FILES.items():
+        loss_file = results_dir / filename
         if not loss_file.is_file():
             missing.append(str(loss_file))
             continue
@@ -36,47 +33,47 @@ def load_validation_losses(results_dir: Path) -> dict[str, np.ndarray]:
 
     if missing:
         missing_files = "\n".join(f"  - {file}" for file in missing)
-        raise FileNotFoundError(f"Missing validation-loss files:\n{missing_files}")
+        raise FileNotFoundError(f"Missing loss files:\n{missing_files}")
 
     return losses
 
 
-def plot_validation_losses(losses: dict[str, np.ndarray], destination: Path | None,
-                           show: bool = False) -> None:
-    """Create the first comparison plot; additional plots can be added here later."""
-    figure, axis = plt.subplots(figsize=(9, 5))
+def plot_losses(losses: dict[str, np.ndarray], title: str, destination: Path | None,
+                show: bool = False) -> None:
+    figure, axis = plt.subplots()
     for label, values in losses.items():
-        axis.plot(np.arange(1, len(values) + 1), values, linewidth=2, label=label)
+        axis.plot(np.arange(len(values)), values, linewidth=2, label=label)
 
-    axis.set_title("TOY2 validation loss by loss function")
+    axis.set_title(title)
     axis.set_xlabel("Epoch")
-    axis.set_ylabel("Mean validation loss")
+    axis.set_ylabel("Mean loss")
     axis.grid(True, alpha=0.25)
     axis.legend()
     figure.tight_layout()
 
     if destination is not None:
         destination.parent.mkdir(parents=True, exist_ok=True)
-        figure.savefig(destination, dpi=150)
+        figure.savefig(destination)
     if show:
         plt.show()
     plt.close(figure)
 
 
 def get_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Compare TOY2 validation losses.")
-    parser.add_argument("--results-dir", type=Path, default=Path("results/toy2"),
-                        help="Directory containing one result folder per loss function.")
-    parser.add_argument("--dest", type=Path, default=Path("results/toy2/loss_comparison.png"),
-                        help="Output image path. Use --show to display instead.")
+    parser = argparse.ArgumentParser(description="Plot the losses of one experiment.")
+    parser.add_argument("--results-dir", type=Path, required=True,
+                        help="Experiment folder, containing loss_tra.npy and loss_val.npy.")
+    parser.add_argument("--dest", type=Path, default=None,
+                        help="Output image path (default: <results-dir>/loss.png).")
     parser.add_argument("--show", action="store_true", help="Display the plot after saving it.")
     return parser.parse_args()
 
 
 def main() -> None:
     args = get_args()
-    losses = load_validation_losses(args.results_dir)
-    plot_validation_losses(losses, args.dest, show=args.show)
+    losses = load_losses(args.results_dir)
+    destination = args.dest if args.dest else args.results_dir / "loss.png"
+    plot_losses(losses, str(args.results_dir), destination, show=args.show)
 
 
 if __name__ == "__main__":
