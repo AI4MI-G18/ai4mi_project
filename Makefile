@@ -65,3 +65,16 @@ data/SEGTHOR_PREPROC:
 	python $(CFLAGS) slice_segthor.py --source_dir $(SOURCE_DIR) --dest_dir $@_tmp \
 		--shape 256 256 --retain $(RETAIN) -p $(PROCS) $(HU_WINDOW) $(SPACING)
 	mv $@_tmp $@
+
+## For 2.5D/3D: SEGTHOR_PREPROC with the slices also resampled to 2.5 mm along z,
+## so that neighbouring slices are equally far apart in every patient (the scans
+## have 2 to 3.7 mm). stitch.py undoes it along with the in-plane resampling.
+## This leads to different DICE inherently so not necessarily comparable to runs without this
+SPACING_Z := --spacing 1.5 1.5 2.5
+
+data/SEGTHOR_PREPROC_Z:
+	$(info $(green)python $(CFLAGS) slice_segthor.py$(reset))
+	rm -rf $@_tmp $@
+	python $(CFLAGS) slice_segthor.py --source_dir $(SOURCE_DIR) --dest_dir $@_tmp \
+		--shape 256 256 --retain $(RETAIN) -p $(PROCS) $(HU_WINDOW) $(SPACING_Z)
+	mv $@_tmp $@
