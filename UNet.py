@@ -69,6 +69,7 @@ class UNet(nn.Module):
     context: int = 0  # Neighbouring slices taken on each side, as extra input channels
     depth: int = 4  # Number of downsamplings
     width: int = 32  # Kernels of the first level, doubled at each downsampling
+    deep_supervision: bool = False  # Also outputs at 1/2 and 1/4 resolution, in training
 
     def __init__(self, in_dim: int, out_dim: int, **kwargs):
         # **kwargs discards the keyword arguments of ENet (kernels, factor)
@@ -93,10 +94,14 @@ class UNet(nn.Module):
             prev = w
 
         self.final = layers[self.ndim]['conv'](prev, out_dim, kernel_size=1)
+        if self.deep_supervision:
+            # On the outputs of the decoders at 1/2 and 1/4 resolution
+            self.aux_heads = nn.ModuleList([layers[self.ndim]['conv'](w, out_dim, kernel_size=1)
+                                            for w in widths[1:3]])
 
         print(f"Initialized {self.__class__.__name__} succesfully")
 
-    def forward(self, input: Tensor) -> Tensor:
+    def forward(self, input: Tensor) -> Tensor | tuple[Tensor, list[Tensor]]:
         assert all(s % 2**self.depth == 0 for s in input.shape[2:]), (input.shape, self.depth)
 
         skips: list[Tensor] = []
@@ -108,10 +113,17 @@ class UNet(nn.Module):
 
         x = self.bottleneck(x)
 
+        decoded: list[Tensor] = []
         for up, decoder, skip in zip(self.ups, self.decoders, reversed(skips)):
             x = decoder(torch.cat([up(x), skip], dim=1))
+            decoded.append(x)
 
-        return self.final(x)
+        # The auxiliary outputs only in training: validation and the sliding window get the main one
+        if not (self.deep_supervision and self.training):
+            return self.final(x)
+
+        # decoded[-2] is at 1/2 resolution, decoded[-3] at 1/4
+        return self.final(x), [head(d) for head, d in zip(self.aux_heads, decoded[-2::-1])]
 
     def init_weights(self, *args, **kwargs):
         for m in self.modules():
@@ -128,3 +140,15 @@ class UNet25D(UNet):
 class UNet3D(UNet):
     ndim: int = 3
     depth: int = 3  # 64 slices in a patch: 8 are left after 3 downsamplings
+
+
+class UNet_DS(UNet):
+    deep_supervision: bool = True
+
+
+class UNet25D_DS(UNet25D):
+    deep_supervision: bool = True
+
+
+class UNet3D_DS(UNet3D):
+    deep_supervision: bool = True

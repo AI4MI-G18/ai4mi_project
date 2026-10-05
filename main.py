@@ -42,8 +42,9 @@ from functools import partial
 from dataset import SliceDataset, VolumeDataset
 from ShallowNet import shallowCNN
 from ENet import ENet
-from ENetOurs import ENetImproved, ENetImproved25D, ENetImproved3D
-from UNet import UNet, UNet25D, UNet3D
+from ENetOurs import (ENetImproved, ENetImproved25D, ENetImproved3D,
+                      ENetImproved_DS, ENetImproved25D_DS, ENetImproved3D_DS)
+from UNet import UNet, UNet25D, UNet3D, UNet_DS, UNet25D_DS, UNet3D_DS
 from utils import (Dcm,
                    class2one_hot,
                    probs2one_hot,
@@ -72,11 +73,20 @@ architectures = {
     'ENetImproved': ENetImproved,
     'ENetImproved25D': ENetImproved25D,
     'ENetImproved3D': ENetImproved3D,
+    'ENetImproved_DS': ENetImproved_DS,
+    'ENetImproved25D_DS': ENetImproved25D_DS,
+    'ENetImproved3D_DS': ENetImproved3D_DS,
     'shallowCNN': shallowCNN,
     'UNet': UNet,
     'UNet25D': UNet25D,
     'UNet3D': UNet3D,
+    'UNet_DS': UNet_DS,
+    'UNet25D_DS': UNet25D_DS,
+    'UNet3D_DS': UNet3D_DS,
 }
+
+# Deep supervision: the weights of the auxiliary losses, finest output first (the main loss weighs 1)
+DEEP_SUPERVISION_WEIGHTS: list[float] = [0.5, 0.25]
 
 datasets_params: dict[str, dict[str, Any]] = {}
 # K for the number of classes
@@ -256,11 +266,14 @@ def runTraining(args):
                     B = img.shape[0]
                     volumes: bool = img.ndim == 5  # (B, 1, W, H, D), from the VolumeDataset
 
+                    aux_logits: list[Tensor] = []  # Deep supervision: the coarser outputs, finest first
                     if volumes and m == 'val':
                         # A whole volume, for a network trained on patches of it
                         pred_probs = sliding_window_z(net, img, args.patch[2])
                     else:
                         pred_logits = net(img)
+                        if isinstance(pred_logits, tuple):  # Deep supervision, in training only
+                            pred_logits, aux_logits = pred_logits
                         pred_probs = F.softmax(1 * pred_logits, dim=1)  # 1 is the temperature parameter
 
                     # Metrics computation, not used for training
@@ -268,6 +281,10 @@ def runTraining(args):
                     log_dice[e, j:j + B, :] = dice_coef(pred_seg, gt)  # One DSC value per sample and per class
 
                     loss = loss_fn(pred_probs, gt)
+                    for weight, aux in zip(DEEP_SUPERVISION_WEIGHTS, aux_logits):
+                        # Nearest neighbour keeps the downsampled ground truth one-hot
+                        aux_gt: Tensor = F.interpolate(gt.float(), size=aux.shape[2:], mode='nearest').type(gt.dtype)
+                        loss = loss + weight * loss_fn(F.softmax(aux, dim=1), aux_gt)
                     log_loss[e, i] = loss.item()  # One loss value per batch (averaged in the loss)
 
                     if opt:  # Only for training

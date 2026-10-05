@@ -223,12 +223,12 @@ class ENetImproved(nn.Module):
     """
     ndim: int = 2
     context: int = 0
+    deep_supervision: bool = False  # Also outputs at 1/4 and 1/8 resolution, in training
 
-    def __init__(self, in_dim: int, out_dim: int, deep_supervision: bool = False, **kwargs):
+    def __init__(self, in_dim: int, out_dim: int, **kwargs):
         super().__init__()
         Fp: int = kwargs["factor"] if "factor" in kwargs else 4  # Projecting factor
         K: int = kwargs["kernels"] if "kernels" in kwargs else 16  # n_kernels
-        self.deep_supervision = deep_supervision
         dims: int = self.ndim
         in_dim *= 2 * self.context + 1  # main.py gives the channels of one slice
         self.dims = dims
@@ -275,7 +275,7 @@ class ENetImproved(nn.Module):
                 self.aux_head_h4 = L.conv(K, out_dim, kernel_size=1)
                 self.aux_head_h8 = L.conv(K * 4, out_dim, kernel_size=1)
 
-        print(f"> Initialized {self.__class__.__name__} ({in_dim=}->{out_dim=}, {dims=}, {deep_supervision=}) "
+        print(f"> Initialized {self.__class__.__name__} ({in_dim=}->{out_dim=}, {dims=}, {self.deep_supervision=}) "
               f"with {kwargs}")
 
 
@@ -304,7 +304,8 @@ class ENetImproved(nn.Module):
         final_in = torch.cat((upsampled, full_res), dim=1)
         main_out = self.final(final_in)
 
-        if not self.deep_supervision:
+        # The auxiliary outputs only in training: validation and the sliding window get the main one
+        if not (self.deep_supervision and self.training):
                 return main_out
 
         aux_h4 = self.aux_head_h4(bn4_out)
@@ -324,3 +325,15 @@ class ENetImproved3D(ENetImproved):
     # On 128x128 patches the bottleneck is only 16 wide,
     # so its dilation-16 convolutions would see nothing but padding in training
     patch: tuple[int, int, int] = (256, 256, 32)
+
+
+class ENetImproved_DS(ENetImproved):
+    deep_supervision: bool = True
+
+
+class ENetImproved25D_DS(ENetImproved25D):
+    deep_supervision: bool = True
+
+
+class ENetImproved3D_DS(ENetImproved3D):
+    deep_supervision: bool = True
