@@ -20,6 +20,8 @@ data/TOY2:
 ## Number of processes for the slicing (-1: all cores), e.g. `make data/SEGTHOR PROCS=8`
 PROCS ?= -1
 SOURCE_DIR ?= data
+## Where the sliced datasets are written, e.g. `make /some/big/disk/SEGTHOR DATA_ROOT=/some/big/disk`
+DATA_ROOT ?= data
 RETAIN ?= 10
 
 ## Full training set (40 patients)
@@ -31,7 +33,7 @@ data/segthor_train: data/segthor_train_full.zip
 	rm -f $@_tmp/.DS_STORE $@_tmp/train/.DS_STORE
 	mv $@_tmp $@
 
-data/SEGTHOR:
+$(DATA_ROOT)/SEGTHOR:
 	$(info $(green)python $(CFLAGS) slice_segthor.py$(reset))
 	rm -rf $@_tmp $@
 	python $(CFLAGS) slice_segthor.py --source_dir $(SOURCE_DIR) --dest_dir $@_tmp \
@@ -45,21 +47,21 @@ data/SEGTHOR:
 HU_WINDOW := --hu_window -500 500
 SPACING := --spacing 1.5 1.5
 
-data/SEGTHOR_HU:
+$(DATA_ROOT)/SEGTHOR_HU:
 	$(info $(green)python $(CFLAGS) slice_segthor.py$(reset))
 	rm -rf $@_tmp $@
 	python $(CFLAGS) slice_segthor.py --source_dir $(SOURCE_DIR) --dest_dir $@_tmp \
 		--shape 256 256 --retain $(RETAIN) -p $(PROCS) $(HU_WINDOW)
 	mv $@_tmp $@
 
-data/SEGTHOR_RESAMPLE:
+$(DATA_ROOT)/SEGTHOR_RESAMPLE:
 	$(info $(green)python $(CFLAGS) slice_segthor.py$(reset))
 	rm -rf $@_tmp $@
 	python $(CFLAGS) slice_segthor.py --source_dir $(SOURCE_DIR) --dest_dir $@_tmp \
 		--shape 256 256 --retain $(RETAIN) -p $(PROCS) $(SPACING)
 	mv $@_tmp $@
 
-data/SEGTHOR_PREPROC:
+$(DATA_ROOT)/SEGTHOR_PREPROC:
 	$(info $(green)python $(CFLAGS) slice_segthor.py$(reset))
 	rm -rf $@_tmp $@
 	python $(CFLAGS) slice_segthor.py --source_dir $(SOURCE_DIR) --dest_dir $@_tmp \
@@ -72,7 +74,7 @@ data/SEGTHOR_PREPROC:
 ## This leads to different DICE inherently so not necessarily comparable to runs without this
 SPACING_Z := --spacing 1.5 1.5 2.5
 
-data/SEGTHOR_PREPROC_Z:
+$(DATA_ROOT)/SEGTHOR_PREPROC_Z:
 	$(info $(green)python $(CFLAGS) slice_segthor.py$(reset))
 	rm -rf $@_tmp $@
 	python $(CFLAGS) slice_segthor.py --source_dir $(SOURCE_DIR) --dest_dir $@_tmp \
