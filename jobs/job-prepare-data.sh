@@ -1,6 +1,9 @@
 #!/bin/bash
 # Build both datasets the verification needs, before the array trains on them.
 #
+# For 3D you do
+# sbatch jobs/job-prepare-data.sh SEGTHOR_PREPROC SEGTHOR_PREPROC_Z
+#
 # Idempotent: make skips a dataset that is already built, so resubmitting is free.
 #SBATCH --job-name=pipeline-prepare
 #SBATCH --partition=rome
@@ -21,7 +24,13 @@ echo "== branch  $(git rev-parse --abbrev-ref HEAD) at $(git rev-parse --short H
 source ./scripts/pipeline/setup.sh
 echo "== python  $(command -v python)"
 
-for DATASET in SEGTHOR SEGTHOR_PREPROC; do
+if (( $# )); then
+    DATASETS=("$@")
+else
+    DATASETS=(SEGTHOR SEGTHOR_PREPROC)
+fi
+
+for DATASET in "${DATASETS[@]}"; do
     echo "########## build data/$DATASET ##########"
     time make "data/$DATASET" PROCS=32
     n=$(ls "data/$DATASET/train/img" | wc -l)
