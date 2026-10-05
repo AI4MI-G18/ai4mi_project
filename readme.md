@@ -168,6 +168,12 @@ options:
   --dest DEST           Destination directory to save the results (predictions and weights).
   --gpu
   --debug               Keep only a fraction (10 samples) of the datasets, to test the logic around epochs and logging easily.
+  --opt {Adam, AdamW}
+  --betas               Beta params for the optimizer, by default  (0.9, 0.999)
+  --lr                  Learning rate of optimizer, by default 0.0005
+  --weight_decay        Weight decay of AdamW (if that is chosen), by default 1e-4
+
+
 $ python main.py --dataset TOY2 --mode full --epochs 25 --dest results/toy2/ce --gpu
 
 $ python main.py --dataset TOY2 --mode full --loss Dice --epochs 25 --dest results/toy2/dice --gpu
@@ -179,6 +185,9 @@ $ python main.py --dataset SEGTHOR --mode full --loss DiceCE --epochs 25 --dest 
 $ python main.py --dataset SEGTHOR --mode full --loss DiceTopK --epochs 25 --dest results/SEGTHOR/DiceTopK --gpu
 
 $ python main.py --dataset SEGTHOR --mode full --loss DiceFocal --epochs 25 --dest results/SEGTHOR/DiceFocal --gpu
+
+$ python main.py --dataset SEGTHOR --mode full --loss DiceFocal --epochs 25 --dest results/SEGTHOR/DiceFocal --gpu --opt AdamW
+
 
 ```
 

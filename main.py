@@ -141,8 +141,11 @@ def setup(args) -> tuple[nn.Module, Any, Any, DataLoader, DataLoader, int]:
     # Slices before and after the one to segment, that the network wants as input channels (2.5D)
     context: int = getattr(net_class, 'context', 0)
 
-    lr = 0.0005
-    optimizer = torch.optim.Adam(net.parameters(), lr=lr, betas=(0.9, 0.999))
+    lr = 0.0005 if args.lr is None else args.lr
+    betas = (0.9, 0.999) if args.betas is None else tuple(args.betas)
+    weight_decay = 1e-4 if args.weight_decay is None else args.weight_decay
+    optimizer = torch.optim.Adam(net.parameters(), lr=lr, betas=betas) if args.opt == 'Adam' else torch.optim.AdamW(net.parameters(), lr=lr, betas=betas, weight_decay=weight_decay)
+    print(f">> Using {args.opt} optimizer with lr={lr}, betas={betas}, weight_decay={weight_decay if args.opt == 'AdamW' else 'None'}")
 
     # Dataset part
     B: int = datasets_params[args.dataset]['B']
@@ -364,6 +367,11 @@ def main():
     parser.add_argument('--debug', action='store_true',
                         help="Keep only a fraction (10 samples) of the datasets, "
                              "to test the logics around epochs and logging easily.")
+    parser.add_argument('--opt', default='Adam', choices=['Adam', 'AdamW'],
+                        help="Optimizer to use. Default: Adam.")
+    parser.add_argument('--lr', type=float, help="Learning rate. Default: 0.0005.")
+    parser.add_argument('--betas', nargs=2, type=float, help="Beta values for the optimizer. Default: (0.9, 0.999).")
+    parser.add_argument('--weight_decay', type=float, help="Weight decay for the optimizer. Default: 1e-4.")
 
 
     args = parser.parse_args()
