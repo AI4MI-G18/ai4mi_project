@@ -28,40 +28,56 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
+from types import SimpleNamespace
+
 import torch
 import torch.nn as nn
 from torch import Tensor
 
 
+LAYERS: dict[int, SimpleNamespace] = {
+        2: SimpleNamespace(conv=nn.Conv2d, conv_t=nn.ConvTranspose2d, norm=nn.InstanceNorm2d, pool=nn.MaxPool2d),
+        3: SimpleNamespace(conv=nn.Conv3d, conv_t=nn.ConvTranspose3d, norm=nn.InstanceNorm3d, pool=nn.MaxPool3d),
+}
+
+
+def in_plane(v: int, dims: int) -> int | tuple[int, int, int]:
+    return v if dims == 2 else (v, v, 1)
+
+
 def random_weights_init(m):
-    if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
+    if isinstance(m, (nn.Conv2d, nn.ConvTranspose2d, nn.Conv3d, nn.ConvTranspose3d)):
         nn.init.xavier_normal_(m.weight.data)
-    elif isinstance(m, (nn.BatchNorm2d, nn.InstanceNorm2d)) and m.affine:
+    elif isinstance(m, (nn.BatchNorm2d, nn.InstanceNorm2d, nn.InstanceNorm3d)) and m.affine:
         m.weight.data.normal_(1.0, 0.02)
         m.bias.data.fill_(0)
 
 
-def conv_block(in_dim, out_dim, **kwconv):
-    return nn.Sequential(nn.Conv2d(in_dim, out_dim, **kwconv),
-                         nn.InstanceNorm2d(out_dim, affine=True),
+def conv_block(in_dim, out_dim, *, dims: int = 2, **kwconv):
+    L = LAYERS[dims]
+    return nn.Sequential(L.conv(in_dim, out_dim, **kwconv),
+                         L.norm(out_dim, affine=True),
                          nn.PReLU())
 
 
-def conv_block_asym(in_dim, out_dim, *, kernel_size: int):
-    return nn.Sequential(nn.Conv2d(in_dim, out_dim,
-                                   kernel_size=(kernel_size, 1),
-                                   padding=(2, 0)),
-                         nn.Conv2d(out_dim, out_dim,
-                                   kernel_size=(1, kernel_size),
-                                   padding=(0, 2)),
-                         nn.InstanceNorm2d(out_dim, affine=True),
+def conv_block_asym(in_dim, out_dim, *, kernel_size: int, dims: int = 2):
+    # In 3D: the same two in-plane convolutions, of size 1 along z
+    L = LAYERS[dims]
+    z_size, z_pad = (1,) * (dims - 2), (0,) * (dims - 2)
+    return nn.Sequential(L.conv(in_dim, out_dim,
+                                kernel_size=(kernel_size, 1, *z_size),
+                                padding=(2, 0, *z_pad)),
+                         L.conv(out_dim, out_dim,
+                                kernel_size=(1, kernel_size, *z_size),
+                                padding=(0, 2, *z_pad)),
+                         L.norm(out_dim, affine=True),
                          nn.PReLU())
 
 
 class BottleNeck(nn.Module):
     def __init__(self, in_dim, out_dim, projectionFactor,
                  *, dropoutRate=0.01, dilation=1,
-                 asym: bool = False, dilate_last: bool = False):
+                 asym: bool = False, dilate_last: bool = False, dims: int = 2):
         super().__init__()
         self.in_dim = in_dim
         self.out_dim = out_dim
@@ -70,22 +86,23 @@ class BottleNeck(nn.Module):
         # Main branch
 
         # Secondary branch
-        self.block0 = conv_block(in_dim, mid_dim, kernel_size=1)
+        self.block0 = conv_block(in_dim, mid_dim, dims=dims, kernel_size=1)
 
         if not asym:
-            self.block1 = conv_block(mid_dim, mid_dim, kernel_size=3, padding=dilation, dilation=dilation)
+            self.block1 = conv_block(mid_dim, mid_dim, dims=dims, kernel_size=3,
+                                     padding=in_plane(dilation, dims), dilation=in_plane(dilation, dims))
         else:
-            self.block1 = conv_block_asym(mid_dim, mid_dim, kernel_size=5)
+            self.block1 = conv_block_asym(mid_dim, mid_dim, kernel_size=5, dims=dims)
 
-        self.block2 = conv_block(mid_dim, out_dim, kernel_size=1)
+        self.block2 = conv_block(mid_dim, out_dim, dims=dims, kernel_size=1)
 
         self.do = nn.Dropout(p=dropoutRate)
         self.PReLU_out = nn.PReLU()
 
         if in_dim > out_dim:
-            self.conv_out = conv_block(in_dim, out_dim, kernel_size=1)
+            self.conv_out = conv_block(in_dim, out_dim, dims=dims, kernel_size=1)
         elif dilate_last:
-            self.conv_out = conv_block(in_dim, out_dim, kernel_size=3, padding=1)
+            self.conv_out = conv_block(in_dim, out_dim, dims=dims, kernel_size=3, padding=1)
         else:
             self.conv_out = nn.Identity()
 
@@ -103,17 +120,17 @@ class BottleNeck(nn.Module):
 
 
 class BottleNeckDownSampling(nn.Module):
-    def __init__(self, in_dim, out_dim, projectionFactor):
+    def __init__(self, in_dim, out_dim, projection_factor, *, dims: int = 2):
         super().__init__()
-        mid_dim: int = in_dim // projectionFactor
+        mid_dim: int = in_dim // projection_factor
 
         # Main branch
-        self.maxpool0 = nn.MaxPool2d(2, return_indices=False)
+        self.maxpool0 = LAYERS[dims].pool(2, return_indices=False)
 
         # Secondary branch
-        self.block0 = conv_block(in_dim, mid_dim, kernel_size=2, padding=0, stride=2)
-        self.block1 = conv_block(mid_dim, mid_dim, kernel_size=3, padding=1)
-        self.block2 = conv_block(mid_dim, out_dim, kernel_size=1)
+        self.block0 = conv_block(in_dim, mid_dim, dims=dims, kernel_size=2, padding=0, stride=2)
+        self.block1 = conv_block(mid_dim, mid_dim, dims=dims, kernel_size=3, padding=1)
+        self.block2 = conv_block(mid_dim, out_dim, dims=dims, kernel_size=1)
 
         # Regularizer
         self.do = nn.Dropout(p=0.01)
@@ -131,9 +148,9 @@ class BottleNeckDownSampling(nn.Module):
         b2 = self.block2(b1)
         do = self.do(b2)
 
-        _, c, _, _ = maxpool_output.shape
+        c: int = maxpool_output.shape[1]
         output = do
-        output[:, :c, :, :] += maxpool_output
+        output[:, :c] += maxpool_output
 
         final_output = self.PReLU(output)
 
@@ -142,18 +159,18 @@ class BottleNeckDownSampling(nn.Module):
 
 class BottleNeckUpSampling(nn.Module):
     """Upsampling with T. convolution instead of MaxUnpool"""
-    def __init__(self, in_dim, out_dim, projectionFactor):
+    def __init__(self, in_dim, out_dim, projection_factor, *, dims: int = 2):
         super().__init__()
-        mid_dim: int = in_dim // projectionFactor
+        mid_dim: int = in_dim // projection_factor
         up_dim: int = in_dim // 2
 
         # Main branch
-        self.up = nn.ConvTranspose2d(up_dim, up_dim, kernel_size=2, stride=2)
+        self.up = LAYERS[dims].conv_t(up_dim, up_dim, kernel_size=2, stride=2)
 
         # Secondary branch
-        self.block0 = conv_block(in_dim, mid_dim, kernel_size=3, padding=1)
-        self.block1 = conv_block(mid_dim, mid_dim, kernel_size=3, padding=1)
-        self.block2 = conv_block(mid_dim, out_dim, kernel_size=1)
+        self.block0 = conv_block(in_dim, mid_dim, dims=dims, kernel_size=3, padding=1)
+        self.block1 = conv_block(mid_dim, mid_dim, dims=dims, kernel_size=3, padding=1)
+        self.block2 = conv_block(mid_dim, out_dim, dims=dims, kernel_size=1)
 
         # Regularizer
         self.do = nn.Dropout(p=0.01)
@@ -179,68 +196,87 @@ class BottleNeckUpSampling(nn.Module):
         return output
 
 
-def _dilated_bottleneck_stack(K8: int, Fp: int, *, out_dim: int = None, dilate_last: bool = False) -> nn.Sequential:
+def _dilated_bottleneck_stack(K8: int, Fp: int, *, out_dim: int = None, dilate_last: bool = False,
+                              dims: int = 2) -> nn.Sequential:
     out_last = out_dim if out_dim is not None else K8
     return nn.Sequential(
-            BottleNeck(K8, K8, Fp, dropoutRate=0.1),
-            BottleNeck(K8, K8, Fp, dilation=2),
-            BottleNeck(K8, K8, Fp, dropoutRate=0.1, asym=True),
-            BottleNeck(K8, K8, Fp, dilation=4),
-            BottleNeck(K8, K8, Fp, dropoutRate=0.1),
-            BottleNeck(K8, K8, Fp, dilation=8),
-            BottleNeck(K8, K8, Fp, dropoutRate=0.1, asym=True),
-            BottleNeck(K8, out_last, Fp, dilation=16, dilate_last=dilate_last),
+            BottleNeck(K8, K8, Fp, dropoutRate=0.1, dims=dims),
+            BottleNeck(K8, K8, Fp, dilation=2, dims=dims),
+            BottleNeck(K8, K8, Fp, dropoutRate=0.1, asym=True, dims=dims),
+            BottleNeck(K8, K8, Fp, dilation=4, dims=dims),
+            BottleNeck(K8, K8, Fp, dropoutRate=0.1, dims=dims),
+            BottleNeck(K8, K8, Fp, dilation=8, dims=dims),
+            BottleNeck(K8, K8, Fp, dropoutRate=0.1, asym=True, dims=dims),
+            BottleNeck(K8, out_last, Fp, dilation=16, dilate_last=dilate_last, dims=dims),
     )
 
 
 class ENetImproved(nn.Module):
-    """Baseline with changes."""
-    def __init__(self, in_dim: int, out_dim: int, deep_supervision: bool = False, **kwargs):
+    """
+    Baseline with changes.
+
+    As for the U-Nets of UNet.py, main.py reads `context` and `ndim` to know what data
+    to give it (see ENetImproved25D and ENetImproved3D below):
+    context > 0 (2.5D): the slice to segment and its neighbours, as channels, the
+    slice itself in the middle one.
+    ndim = 3: 3D layers, for patches of (x, y, z) with every dim a multiple of 8.
+    """
+    ndim: int = 2
+    context: int = 0
+    deep_supervision: bool = False  # Also outputs at 1/4 and 1/8 resolution, in training
+
+    def __init__(self, in_dim: int, out_dim: int, **kwargs):
         super().__init__()
         Fp: int = kwargs["factor"] if "factor" in kwargs else 4  # Projecting factor
         K: int = kwargs["kernels"] if "kernels" in kwargs else 16  # n_kernels
-        self.deep_supervision = deep_supervision
+        dims: int = self.ndim
+        in_dim *= 2 * self.context + 1  # main.py gives the channels of one slice
+        self.dims = dims
+        L = LAYERS[dims]
 
         self.emb = nn.Sequential(
-                conv_block(in_dim, K, kernel_size=3, padding=1),
-                conv_block(K, K, kernel_size=3, padding=1),
+                conv_block(in_dim, K, dims=dims, kernel_size=3, padding=1),
+                conv_block(K, K, dims=dims, kernel_size=3, padding=1),
         )
 
         # Initial operations
-        self.conv0 = nn.Conv2d(in_dim, K - 1, kernel_size=3, stride=2, padding=1)
-        self.maxpool0 = nn.MaxPool2d(2, return_indices=False, ceil_mode=False)
+        # maxpool only takes slice being segmented to maintain expected channels
+        self.center: int = in_dim // 2
+        self.conv0 = L.conv(in_dim, K - 1, kernel_size=3, stride=2, padding=1)
+        self.maxpool0 = L.pool(2, return_indices=False, ceil_mode=False)
 
         # Downsampling half
-        self.bottleneck1_0 = BottleNeckDownSampling(K, K * 4, Fp)
-        self.bottleneck1_1 = nn.Sequential(BottleNeck(K * 4, K * 4, Fp),
-                                           BottleNeck(K * 4, K * 4, Fp),
-                                           BottleNeck(K * 4, K * 4, Fp),
-                                           BottleNeck(K * 4, K * 4, Fp))
-        self.bottleneck2_0 = BottleNeckDownSampling(K * 4, K * 8, Fp)
-        self.bottleneck2_1 = _dilated_bottleneck_stack(K * 8, Fp)
+        self.bottleneck1_0 = BottleNeckDownSampling(K, K * 4, Fp, dims=dims)
+        self.bottleneck1_1 = nn.Sequential(BottleNeck(K * 4, K * 4, Fp, dims=dims),
+                                           BottleNeck(K * 4, K * 4, Fp, dims=dims),
+                                           BottleNeck(K * 4, K * 4, Fp, dims=dims),
+                                           BottleNeck(K * 4, K * 4, Fp, dims=dims))
+        self.bottleneck2_0 = BottleNeckDownSampling(K * 4, K * 8, Fp, dims=dims)
+        self.bottleneck2_1 = _dilated_bottleneck_stack(K * 8, Fp, dims=dims)
 
         # Middle operations
-        self.bottleneck3 = _dilated_bottleneck_stack(K * 8, Fp, out_dim=K * 4, dilate_last=True)
+        self.bottleneck3 = _dilated_bottleneck_stack(K * 8, Fp, out_dim=K * 4, dilate_last=True, dims=dims)
 
         # Upsampling half
-        self.bottleneck4 = nn.Sequential(BottleNeckUpSampling(K * 8, K * 4, Fp),
-                                         BottleNeck(K * 4, K * 4, Fp, dropoutRate=0.1),
-                                         BottleNeck(K * 4, K, Fp, dropoutRate=0.1))
-        self.bottleneck5 = nn.Sequential(BottleNeckUpSampling(K * 2, K, Fp),
-                                         BottleNeck(K, K, Fp, dropoutRate=0.1))
+        self.bottleneck4 = nn.Sequential(BottleNeckUpSampling(K * 8, K * 4, Fp, dims=dims),
+                                         BottleNeck(K * 4, K * 4, Fp, dropoutRate=0.1, dims=dims),
+                                         BottleNeck(K * 4, K, Fp, dropoutRate=0.1, dims=dims))
+        self.bottleneck5 = nn.Sequential(BottleNeckUpSampling(K * 2, K, Fp, dims=dims),
+                                         BottleNeck(K, K, Fp, dropoutRate=0.1, dims=dims))
 
-        self.up_final = nn.ConvTranspose2d(K, K, kernel_size=2, stride=2)
+        self.up_final = L.conv_t(K, K, kernel_size=2, stride=2)
 
         # Final convolutions
-        self.final = nn.Sequential(conv_block(K * 2, K, kernel_size=3, padding=1, bias=False, stride=1),
-                                   conv_block(K, K, kernel_size=3, padding=1, bias=False, stride=1),
-                                   nn.Conv2d(K, out_dim, kernel_size=1))
+        self.final = nn.Sequential(conv_block(K * 2, K, dims=dims, kernel_size=3, padding=1, bias=False, stride=1),
+                                   conv_block(K, K, dims=dims, kernel_size=3, padding=1, bias=False, stride=1),
+                                   L.conv(K, out_dim, kernel_size=1))
 
         if self.deep_supervision:
-                self.aux_head_h4 = nn.Conv2d(K, out_dim, kernel_size=1)
-                self.aux_head_h8 = nn.Conv2d(K * 4, out_dim, kernel_size=1)
+                self.aux_head_h4 = L.conv(K, out_dim, kernel_size=1)
+                self.aux_head_h8 = L.conv(K * 4, out_dim, kernel_size=1)
 
-        print(f"> Initialized {self.__class__.__name__} ({in_dim=}->{out_dim=}, {deep_supervision=}) with {kwargs}")
+        print(f"> Initialized {self.__class__.__name__} ({in_dim=}->{out_dim=}, {dims=}, {self.deep_supervision=}) "
+              f"with {kwargs}")
 
 
     def forward(self, input):
@@ -248,7 +284,7 @@ class ENetImproved(nn.Module):
 
         # Initial operations
         conv_0 = self.conv0(input)
-        maxpool_0 = self.maxpool0(input)
+        maxpool_0 = self.maxpool0(input[:, self.center:self.center + 1])
         outputInitial = torch.cat((conv_0, maxpool_0), dim=1)
 
         # Downsampling half
@@ -268,7 +304,8 @@ class ENetImproved(nn.Module):
         final_in = torch.cat((upsampled, full_res), dim=1)
         main_out = self.final(final_in)
 
-        if not self.deep_supervision:
+        # The auxiliary outputs only in training: validation and the sliding window get the main one
+        if not (self.deep_supervision and self.training):
                 return main_out
 
         aux_h4 = self.aux_head_h4(bn4_out)
@@ -277,3 +314,26 @@ class ENetImproved(nn.Module):
 
     def init_weights(self, *args, **kwargs):
         self.apply(random_weights_init)
+
+
+class ENetImproved25D(ENetImproved):
+    context: int = 2  # 5 slices, as UNet25D
+
+
+class ENetImproved3D(ENetImproved):
+    ndim: int = 3
+    # On 128x128 patches the bottleneck is only 16 wide,
+    # so its dilation-16 convolutions would see nothing but padding in training
+    patch: tuple[int, int, int] = (256, 256, 32)
+
+
+class ENetImproved_DS(ENetImproved):
+    deep_supervision: bool = True
+
+
+class ENetImproved25D_DS(ENetImproved25D):
+    deep_supervision: bool = True
+
+
+class ENetImproved3D_DS(ENetImproved3D):
+    deep_supervision: bool = True

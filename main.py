@@ -42,8 +42,9 @@ from functools import partial
 from dataset import SliceDataset, VolumeDataset
 from ShallowNet import shallowCNN
 from ENet import ENet
-from ENetOurs import ENetImproved
-from UNet import UNet, UNet25D, UNet3D
+from ENetOurs import (ENetImproved, ENetImproved25D, ENetImproved3D,
+                      ENetImproved_DS, ENetImproved25D_DS, ENetImproved3D_DS)
+from UNet import UNet, UNet25D, UNet3D, UNet_DS, UNet25D_DS, UNet3D_DS
 from utils import (Dcm,
                    class2one_hot,
                    probs2one_hot,
@@ -70,11 +71,22 @@ losses = {
 architectures = {
     'ENet': ENet,
     'ENetImproved': ENetImproved,
+    'ENetImproved25D': ENetImproved25D,
+    'ENetImproved3D': ENetImproved3D,
+    'ENetImproved_DS': ENetImproved_DS,
+    'ENetImproved25D_DS': ENetImproved25D_DS,
+    'ENetImproved3D_DS': ENetImproved3D_DS,
     'shallowCNN': shallowCNN,
     'UNet': UNet,
     'UNet25D': UNet25D,
     'UNet3D': UNet3D,
+    'UNet_DS': UNet_DS,
+    'UNet25D_DS': UNet25D_DS,
+    'UNet3D_DS': UNet3D_DS,
 }
+
+# Deep supervision: the weights of the auxiliary losses, finest output first (the main loss weighs 1)
+DEEP_SUPERVISION_WEIGHTS: list[float] = [0.5, 0.25]
 
 datasets_params: dict[str, dict[str, Any]] = {}
 # K for the number of classes
@@ -86,6 +98,8 @@ datasets_params["SEGTHOR_CLEAN"] = {'K': 5, 'net': ENet, 'B': 8, 'kernels': 8, '
 datasets_params["SEGTHOR_HU"] = {'K': 5, 'net': ENet, 'B': 8, 'kernels': 8, 'factor': 2}
 datasets_params["SEGTHOR_RESAMPLE"] = {'K': 5, 'net': ENet, 'B': 8, 'kernels': 8, 'factor': 2}
 datasets_params["SEGTHOR_PREPROC"] = {'K': 5, 'net': ENet, 'B': 8, 'kernels': 8, 'factor': 2}
+# Segthor with resampled Z
+datasets_params["SEGTHOR_PREPROC_Z"] = {'K': 5, 'net': ENet, 'B': 8, 'kernels': 8, 'factor': 2}
 datasets_params["TOY2_OURS"] = {'K': 2, 'net': ENetImproved, 'B': 2, 'kernels': 8, 'factor': 2, 'root': 'TOY'}
 datasets_params["SEGTHOR_OURS"] = {'K': 5, 'net': ENetImproved, 'B': 8, 'kernels': 8, 'factor': 2, 'root': 'SEGTHOR'}
 
@@ -143,6 +157,8 @@ def setup(args) -> tuple[nn.Module, Any, Any, DataLoader, DataLoader, int]:
         # Patches of the volumes for training, and the whole volumes for validation:
         # one at a time, as they do not have the same depth
         B, B_val = 2, 1
+        if args.patch is None:  # The network's own patch size, if it has one
+            args.patch = list(getattr(net_class, 'patch', (128, 128, 64)))
         train_set = VolumeDataset('train',
                                   root_dir,
                                   img_transform=img_transform,
@@ -250,11 +266,14 @@ def runTraining(args):
                     B = img.shape[0]
                     volumes: bool = img.ndim == 5  # (B, 1, W, H, D), from the VolumeDataset
 
+                    aux_logits: list[Tensor] = []  # Deep supervision: the coarser outputs, finest first
                     if volumes and m == 'val':
                         # A whole volume, for a network trained on patches of it
                         pred_probs = sliding_window_z(net, img, args.patch[2])
                     else:
                         pred_logits = net(img)
+                        if isinstance(pred_logits, tuple):  # Deep supervision, in training only
+                            pred_logits, aux_logits = pred_logits
                         pred_probs = F.softmax(1 * pred_logits, dim=1)  # 1 is the temperature parameter
 
                     # Metrics computation, not used for training
@@ -262,6 +281,10 @@ def runTraining(args):
                     log_dice[e, j:j + B, :] = dice_coef(pred_seg, gt)  # One DSC value per sample and per class
 
                     loss = loss_fn(pred_probs, gt)
+                    for weight, aux in zip(DEEP_SUPERVISION_WEIGHTS, aux_logits):
+                        # Nearest neighbour keeps the downsampled ground truth one-hot
+                        aux_gt: Tensor = F.interpolate(gt.float(), size=aux.shape[2:], mode='nearest').type(gt.dtype)
+                        loss = loss + weight * loss_fn(F.softmax(aux, dim=1), aux_gt)
                     log_loss[e, i] = loss.item()  # One loss value per batch (averaged in the loss)
 
                     if opt:  # Only for training
@@ -327,9 +350,10 @@ def main():
     parser.add_argument('--loss', default='CE', choices=losses.keys())
     parser.add_argument('--arch', default=None, choices=architectures.keys(),
                         help="Network to train. Default: the dataset's own choice.")
-    parser.add_argument('--patch', type=int, nargs=3, default=[128, 128, 64], metavar=('W', 'H', 'D'),
+    parser.add_argument('--patch', type=int, nargs=3, default=None, metavar=('W', 'H', 'D'),
                         help="3D networks only: the size of the training patches. The validation "
-                             "slides a window of D slices over the whole volumes.")
+                             "slides a window of D slices over the whole volumes. "
+                             "Default: the network's own (ENetImproved3D: 256 256 32), else 128 128 64.")
     parser.add_argument('--samples_per_volume', type=int, default=32,
                         help="3D networks only: the number of patches per scan in an epoch.")
     parser.add_argument('--dest', type=Path, required=True,
