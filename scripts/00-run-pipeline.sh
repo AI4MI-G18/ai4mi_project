@@ -17,7 +17,7 @@ export LOSS="${2:-CE}"
 # OPT picks the optimizer (Adam, the default, or AdamW). Only AdamW shows in the
 # name of the run, so that the Adam runs stay where they always were.
 export OPT="${OPT:-Adam}"
-RUN="$ARCH-$LOSS"
+RUN="$ARCH-$LOSS${SEED:+-s$SEED}"
 [[ $OPT == Adam ]] || RUN+="-$OPT"
 
 # The three roots move the slices, the results and the stitched volumes off the
