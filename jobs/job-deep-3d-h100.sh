@@ -49,7 +49,8 @@ case "${SLURM_ARRAY_TASK_ID:-0}" in
     *) echo "array index $SLURM_ARRAY_TASK_ID is not one of 0-3" >&2; exit 1 ;;
 esac
 
-export DATASET OPT EPOCHS=25
+# 25 unless the submission says otherwise: submit.sh --dryrun asks for 2.
+export DATASET OPT EPOCHS="${EPOCHS:-25}"
 echo "== task ${SLURM_ARRAY_TASK_ID:-0}: DATASET=$DATASET  $ARCH $LOSS $OPT  $EPOCHS epochs"
 time ./scripts/00-run-pipeline.sh "$ARCH" "$LOSS"
 
