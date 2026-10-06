@@ -30,14 +30,17 @@ else
     DATASETS=(SEGTHOR SEGTHOR_PREPROC)
 fi
 
+# submit.sh points this at the project space; the default is the worktree's data/.
+DATA_ROOT="${DATA_ROOT:-data}"
+
 for DATASET in "${DATASETS[@]}"; do
-    echo "########## build data/$DATASET ##########"
-    time make "data/$DATASET" PROCS=32
-    n=$(ls "data/$DATASET/train/img" | wc -l)
-    v=$(ls "data/$DATASET/val/img" | wc -l)
-    echo "== data/$DATASET: $n train, $v val slices"
+    echo "########## build $DATA_ROOT/$DATASET ##########"
+    time make "$DATA_ROOT/$DATASET" DATA_ROOT="$DATA_ROOT" PROCS=32
+    n=$(ls "$DATA_ROOT/$DATASET/train/img" | wc -l)
+    v=$(ls "$DATA_ROOT/$DATASET/val/img" | wc -l)
+    echo "== $DATA_ROOT/$DATASET: $n train, $v val slices"
     # stitch.py needs this to undo the resampling; SEGTHOR records spacing=null,
     # which is how the pipeline knows there is nothing to undo.
-    python -c "import json; d=json.load(open('data/$DATASET/preprocessing.json')); \
+    python -c "import json; d=json.load(open('$DATA_ROOT/$DATASET/preprocessing.json')); \
 print('== hu_window', d['hu_window'], 'spacing', d['spacing'])"
 done

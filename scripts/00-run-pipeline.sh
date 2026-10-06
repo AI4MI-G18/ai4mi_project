@@ -14,8 +14,17 @@ export DATASET="${DATASET:-SEGTHOR_PREPROC}"
 export ARCH="${1:-ENet}"
 export LOSS="${2:-CE}"
 
-export RUN_DIR="results/preproc/$DATASET/$ARCH-$LOSS${SEED:+-s$SEED}"
-export VOL_DIR="volumes/preproc/$DATASET/$ARCH-$LOSS${SEED:+-s$SEED}"
+# OPT picks the optimizer (Adam, the default, or AdamW). Only AdamW shows in the
+# name of the run, so that the Adam runs stay where they always were.
+export OPT="${OPT:-Adam}"
+RUN="$ARCH-$LOSS${SEED:+-s$SEED}"
+[[ $OPT == Adam ]] || RUN+="-$OPT"
+
+# The three roots move the slices, the results and the stitched volumes off the
+# worktree, e.g. to the project space. data/train, the scans, stays where it is.
+export DATA_ROOT="${DATA_ROOT:-data}"
+export RUN_DIR="${RESULTS_ROOT:-results}/preproc/$DATASET/$RUN"
+export VOL_DIR="${VOLUMES_ROOT:-volumes}/preproc/$DATASET/$RUN"
 
 # setup.sh has to be sourced: it activates the venv, and a subshell would throw
 # that away without saying so

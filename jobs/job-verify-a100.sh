@@ -41,4 +41,4 @@ export DATASET EPOCHS=25
 echo "== task ${SLURM_ARRAY_TASK_ID:-0}: DATASET=$DATASET  ENet $LOSS  $EPOCHS epochs"
 time ./scripts/00-run-pipeline.sh ENet "$LOSS"
 
-echo "== wrote results/preproc/$DATASET/ENet-$LOSS"
+echo "== wrote ${RESULTS_ROOT:-results}/preproc/$DATASET/ENet-$LOSS"
