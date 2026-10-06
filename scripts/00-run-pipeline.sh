@@ -14,8 +14,8 @@ export DATASET="${DATASET:-SEGTHOR_PREPROC}"
 export ARCH="${1:-ENet}"
 export LOSS="${2:-CE}"
 
-export RUN_DIR="results/preproc/$DATASET/$ARCH-$LOSS"
-export VOL_DIR="volumes/preproc/$DATASET/$ARCH-$LOSS"
+export RUN_DIR="results/preproc/$DATASET/$ARCH-$LOSS${SEED:+-s$SEED}"
+export VOL_DIR="volumes/preproc/$DATASET/$ARCH-$LOSS${SEED:+-s$SEED}"
 
 # setup.sh has to be sourced: it activates the venv, and a subshell would throw
 # that away without saying so
