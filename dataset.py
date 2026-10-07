@@ -31,6 +31,7 @@ from PIL import Image
 from torch.utils.data import Dataset
 
 from utils import class2one_hot
+from augment import augment
 
 
 def make_dataset(root, subset) -> list[tuple[Path, Path | None]]:
@@ -54,12 +55,12 @@ def make_dataset(root, subset) -> list[tuple[Path, Path | None]]:
 
 class SliceDataset(Dataset):
     def __init__(self, subset, root_dir, img_transform=None,
-                 gt_transform=None, augment=False, equalize=False, debug=False,
+                 gt_transform=None, augment: tuple[str, ...] = (), equalize=False, debug=False,
                  context: int = 0):
         self.root_dir: str = root_dir
         self.img_transform: Callable = img_transform
         self.gt_transform: Callable = gt_transform
-        self.augmentation: bool = augment
+        self.augmentation: tuple[str, ...] = augment  # see augment.py; () for none
         self.equalize: bool = equalize
         # 2.5D: the `context` slices before and after are stacked as channels around the slice
         self.context: int = context
@@ -109,6 +110,10 @@ class SliceDataset(Dataset):
             K, _, _ = gt.shape
             assert gt.shape == (K, W, H)
 
+            if self.augmentation:
+                img, gt = augment(img, gt, self.augmentation)
+                data_dict["images"] = img
+
             data_dict["gts"] = gt
 
         return data_dict
@@ -126,11 +131,13 @@ class VolumeDataset(Dataset):
     * val:   the whole volumes. They differ in depth, so use a batch size of 1.
     """
     def __init__(self, subset, root_dir, img_transform, gt_transform,
-                 patch: tuple[int, int, int], samples_per_volume: int = 32, debug=False):
+                 patch: tuple[int, int, int], samples_per_volume: int = 32, debug=False,
+                 augment: tuple[str, ...] = ()):
         assert subset in ['train', 'val']
         self.train_mode: bool = subset == 'train'
         self.patch: Tensor = torch.tensor(patch)
         self.samples_per_volume: int = samples_per_volume
+        self.augmentation: tuple[str, ...] = augment  # training patches only, see augment.py
 
         scans: dict[str, list[tuple[Path, Path]]] = {}
         for img_path, gt_path in make_dataset(root_dir, subset):
@@ -186,6 +193,10 @@ class VolumeDataset(Dataset):
             img = img[:, x:x + w, y:y + h, z:z + d]
             gt = gt[x:x + w, y:y + h, z:z + d]
 
+        one_hot: Tensor = class2one_hot(gt[None, ...].long(), K=self.K)[0]
+        if self.train_mode and self.augmentation:
+            img, one_hot = augment(img, one_hot, self.augmentation)
+
         return {"images": img,
-                "gts": class2one_hot(gt[None, ...].long(), K=self.K)[0],
+                "gts": one_hot,
                 "stems": self.stems[scan]}

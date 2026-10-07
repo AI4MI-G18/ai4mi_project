@@ -22,6 +22,7 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
+import math
 import argparse
 import warnings
 from typing import Any
@@ -37,14 +38,16 @@ from torch import nn, Tensor
 from torchvision import transforms
 from torch.utils.data import DataLoader
 
-from functools import partial 
+from functools import partial
 
 from dataset import SliceDataset, VolumeDataset
+from augment import AUGMENTATIONS
 from ShallowNet import shallowCNN
 from ENet import ENet
 from ENetOurs import (ENetImproved, ENetImproved25D, ENetImproved3D,
                       ENetImproved_DS, ENetImproved25D_DS, ENetImproved3D_DS)
-from UNet import UNet, UNet25D, UNet3D, UNet_DS, UNet25D_DS, UNet3D_DS
+from UNet import (UNet, UNet25D, UNet3D, UNet_DS, UNet25D_DS, UNet3D_DS,
+                  UNetSmall_DS, UNet25DSmall_DS, UNet3DSmall_DS)
 from utils import (Dcm,
                    class2one_hot,
                    probs2one_hot,
@@ -83,6 +86,9 @@ architectures = {
     'UNet_DS': UNet_DS,
     'UNet25D_DS': UNet25D_DS,
     'UNet3D_DS': UNet3D_DS,
+    'UNetSmall_DS': UNetSmall_DS,
+    'UNet25DSmall_DS': UNet25DSmall_DS,
+    'UNet3DSmall_DS': UNet3DSmall_DS,
 }
 
 # Deep supervision: the weights of the auxiliary losses, finest output first (the main loss weighs 1)
@@ -103,23 +109,26 @@ datasets_params["SEGTHOR_PREPROC_Z"] = {'K': 5, 'net': ENet, 'B': 8, 'kernels': 
 datasets_params["TOY2_OURS"] = {'K': 2, 'net': ENetImproved, 'B': 2, 'kernels': 8, 'factor': 2, 'root': 'TOY'}
 datasets_params["SEGTHOR_OURS"] = {'K': 5, 'net': ENetImproved, 'B': 8, 'kernels': 8, 'factor': 2, 'root': 'SEGTHOR'}
 
+
 def img_transform(img):
-        img = img.convert('L')
-        img = np.array(img)[np.newaxis, ...]
-        img = img / 255  # max <= 1
-        img = torch.tensor(img, dtype=torch.float32)
-        return img
+    img = img.convert('L')
+    img = np.array(img)[np.newaxis, ...]
+    img = img / 255  # max <= 1
+    img = torch.tensor(img, dtype=torch.float32)
+    return img
+
 
 def gt_transform(K, img):
-        img = np.array(img)[...]
-        # The idea is that the classes are mapped to {0, 255} for binary cases
-        # {0, 85, 170, 255} for 4 classes
-        # {0, 51, 102, 153, 204, 255} for 6 classes
-        # Very sketchy but that works here and that simplifies visualization
-        img = img / (255 / (K - 1)) if K != 5 else img / 63  # max <= 1
-        img = torch.tensor(img, dtype=torch.int64)[None, ...]  # Add one dimension to simulate batch
-        img = class2one_hot(img, K=K)
-        return img[0]
+    img = np.array(img)[...]
+    # The idea is that the classes are mapped to {0, 255} for binary cases
+    # {0, 85, 170, 255} for 4 classes
+    # {0, 51, 102, 153, 204, 255} for 6 classes
+    # Very sketchy but that works here and that simplifies visualization
+    img = img / (255 / (K - 1)) if K != 5 else img / 63  # max <= 1
+    img = torch.tensor(img, dtype=torch.int64)[None, ...]  # Add one dimension to simulate batch
+    img = class2one_hot(img, K=K)
+    return img[0]
+
 
 def setup(args) -> tuple[nn.Module, Any, Any, DataLoader, DataLoader, int]:
     # Networks and scheduler
@@ -144,14 +153,14 @@ def setup(args) -> tuple[nn.Module, Any, Any, DataLoader, DataLoader, int]:
     lr = 0.0005 if args.lr is None else args.lr
     betas = (0.9, 0.999) if args.betas is None else tuple(args.betas)
     weight_decay = 1e-4 if args.weight_decay is None else args.weight_decay
-    optimizer = torch.optim.Adam(net.parameters(), lr=lr, betas=betas) if args.opt == 'Adam' else torch.optim.AdamW(net.parameters(), lr=lr, betas=betas, weight_decay=weight_decay)
-    print(f">> Using {args.opt} optimizer with lr={lr}, betas={betas}, weight_decay={weight_decay if args.opt == 'AdamW' else 'None'}")
+    optimizer = torch.optim.Adam(net.parameters(), lr=lr, betas=betas) if args.opt == 'Adam' else torch.optim.AdamW(
+        net.parameters(), lr=lr, betas=betas, weight_decay=weight_decay)
+    print(
+        f">> Using {args.opt} optimizer with lr={lr}, betas={betas}, weight_decay={weight_decay if args.opt == 'AdamW' else 'None'}")
 
     # Dataset part
     B: int = datasets_params[args.dataset]['B']
     root_dir = Path("data") / datasets_params[args.dataset].get('root', args.dataset)
-
-
 
     train_set: SliceDataset | VolumeDataset
     val_set: SliceDataset | VolumeDataset
@@ -168,7 +177,8 @@ def setup(args) -> tuple[nn.Module, Any, Any, DataLoader, DataLoader, int]:
                                   gt_transform=partial(gt_transform, K),
                                   patch=tuple(args.patch),
                                   samples_per_volume=args.samples_per_volume,
-                                  debug=args.debug)
+                                  debug=args.debug,
+                                  augment=AUGMENTATIONS[args.aug])
         val_set = VolumeDataset('val',
                                 root_dir,
                                 img_transform=img_transform,
@@ -179,9 +189,10 @@ def setup(args) -> tuple[nn.Module, Any, Any, DataLoader, DataLoader, int]:
         train_set = SliceDataset('train',
                                  root_dir,
                                  img_transform=img_transform,
-                                 gt_transform= partial(gt_transform, K),
+                                 gt_transform=partial(gt_transform, K),
                                  debug=args.debug,
-                                 context=context)
+                                 context=context,
+                                 augment=AUGMENTATIONS[args.aug])
         val_set = SliceDataset('val',
                                root_dir,
                                img_transform=img_transform,
@@ -201,6 +212,13 @@ def setup(args) -> tuple[nn.Module, Any, Any, DataLoader, DataLoader, int]:
     args.dest.mkdir(parents=True, exist_ok=True)
 
     return (net, optimizer, device, train_loader, val_loader, K)
+
+
+def make_scheduler(optimizer, kind: str, total_steps: int) -> torch.optim.lr_scheduler.LambdaLR:
+    schedules = {'none': lambda t: 1.0,
+                 'cosine': lambda t: 0.5 * (1 + math.cos(math.pi * t / total_steps)),
+                 'poly': lambda t: (1 - t / total_steps) ** 0.9}
+    return torch.optim.lr_scheduler.LambdaLR(optimizer, schedules[kind])
 
 
 def set_seed(seed: int):
@@ -223,8 +241,9 @@ def runTraining(args):
         idk = [0, 1, 3, 4]  # Do not supervise the heart (class 2)
     else:
         raise ValueError(args.mode, args.dataset)
-    
+
     loss_fn = losses[args.loss](idk=idk)
+    scheduler = make_scheduler(optimizer, args.scheduler, args.epochs * len(train_loader))
 
     # Notice one has the length of the _loader_, and the other one of the _dataset_
     log_loss_tra: Tensor = torch.zeros((args.epochs, len(train_loader)))
@@ -293,6 +312,7 @@ def runTraining(args):
                     if opt:  # Only for training
                         loss.backward()
                         opt.step()
+                        scheduler.step()  # Per optimizer step
 
                     if m == 'val':
                         with warnings.catch_warnings():
@@ -319,6 +339,9 @@ def runTraining(args):
                         postfix_dict |= {f"Dice-{k}": f"{log_dice[e, :j, k].mean():05.3f}"
                                          for k in range(1, K)}
                     tq_iter.set_postfix(postfix_dict)
+
+        if args.scheduler != 'none':
+            print(f">> Learning rate after epoch {e}: {scheduler.get_last_lr()[0]:.2e}")
 
         # I save it at each epochs, in case the code crashes or I decide to stop it early
         np.save(args.dest / "loss_tra.npy", log_loss_tra)
@@ -372,7 +395,11 @@ def main():
     parser.add_argument('--lr', type=float, help="Learning rate. Default: 0.0005.")
     parser.add_argument('--betas', nargs=2, type=float, help="Beta values for the optimizer. Default: (0.9, 0.999).")
     parser.add_argument('--weight_decay', type=float, help="Weight decay for the optimizer. Default: 1e-4.")
-
+    parser.add_argument('--scheduler', default='none', choices=['none', 'cosine', 'poly'],
+                        help="Learning rate schedule, per optimizer step: constant (none), cosine "
+                             "annealing to 0, or poly (1 - t/T)^0.9. Default: none.")
+    parser.add_argument('--aug', default='none', choices=AUGMENTATIONS.keys(),
+                        help="Training augmentations, see augment.py. Default: none.")
 
     args = parser.parse_args()
 
