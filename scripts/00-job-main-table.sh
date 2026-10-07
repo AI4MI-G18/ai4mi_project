@@ -19,8 +19,8 @@ CONFIGS=("SEGTHOR         ENet                CE         none  none"   # 0 basel
          "SEGTHOR_PREPROC ENetImproved25D_DS  DiceFocal  all   poly"   # 5
          "SEGTHOR_PREPROC ENetImproved3D_DS   DiceFocal  all   poly"   # 6
          "SEGTHOR_PREPROC UNetSmall_DS        DiceFocal  all   poly"   # 7
-         "SEGTHOR_PREPROC UNetSmall25D_DS     DiceFocal  all   poly"   # 8
-         "SEGTHOR_PREPROC UNetSmall3D_DS      DiceFocal  all   poly")  # 9
+         "SEGTHOR_PREPROC UNet25DSmall_DS     DiceFocal  all   poly"   # 8
+         "SEGTHOR_PREPROC UNet3DSmall_DS      DiceFocal  all   poly")  # 9
 SEEDS=3
 
 i="${SLURM_ARRAY_TASK_ID:?submit it as an array, e.g. sbatch --array=0-29 jobs/job-main-table.sh}"
