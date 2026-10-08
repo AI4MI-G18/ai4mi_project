@@ -152,3 +152,15 @@ class UNet25D_DS(UNet25D):
 
 class UNet3D_DS(UNet3D):
     deep_supervision: bool = True
+
+
+class UNetSmall_DS(UNet_DS):
+    width: int = 8  # parameters comparable to ENetImproved
+
+
+class UNet25DSmall_DS(UNet25D_DS):
+    width: int = 8
+
+
+class UNet3DSmall_DS(UNet3D_DS):
+    width: int = 8
