@@ -1,2 +1,2 @@
 #!/usr/bin/bash
-make "data/$DATASET"
+make "$DATA_ROOT/$DATASET" DATA_ROOT="$DATA_ROOT"

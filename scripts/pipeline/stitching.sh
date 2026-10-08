@@ -2,10 +2,10 @@
 
 # unresample patients. see how the resampling preprocessng works
 PREPROC_ARG=()
-if [[ -f "data/$DATASET/preprocessing.json" ]]; then
-    PREPROC_ARG=(--preprocessing "data/$DATASET/preprocessing.json")
+if [[ -f "$DATA_ROOT/$DATASET/preprocessing.json" ]]; then
+    PREPROC_ARG=(--preprocessing "$DATA_ROOT/$DATASET/preprocessing.json")
 else
-    echo "== no data/$DATASET/preprocessing.json; stitching without undoing any resampling" >&2
+    echo "== no $DATA_ROOT/$DATASET/preprocessing.json; stitching without undoing any resampling" >&2
 fi
 
 python stitch.py --data_folder "$RUN_DIR/best_epoch/val" \

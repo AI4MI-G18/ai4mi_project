@@ -23,6 +23,7 @@
 # SOFTWARE.
 
 import math
+import os
 import argparse
 import warnings
 from typing import Any
@@ -160,7 +161,7 @@ def setup(args) -> tuple[nn.Module, Any, Any, DataLoader, DataLoader, int]:
 
     # Dataset part
     B: int = datasets_params[args.dataset]['B']
-    root_dir = Path("data") / datasets_params[args.dataset].get('root', args.dataset)
+    root_dir = Path(os.environ.get("DATA_ROOT", "data")) / datasets_params[args.dataset].get('root', args.dataset)
 
     train_set: SliceDataset | VolumeDataset
     val_set: SliceDataset | VolumeDataset
