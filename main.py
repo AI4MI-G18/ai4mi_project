@@ -107,8 +107,10 @@ datasets_params["SEGTHOR_RESAMPLE"] = {'K': 5, 'net': ENet, 'B': 8, 'kernels': 8
 datasets_params["SEGTHOR_PREPROC"] = {'K': 5, 'net': ENet, 'B': 8, 'kernels': 8, 'factor': 2}
 # Segthor with resampled Z
 datasets_params["SEGTHOR_PREPROC_Z"] = {'K': 5, 'net': ENet, 'B': 8, 'kernels': 8, 'factor': 2}
-datasets_params["TOY2_OURS"] = {'K': 2, 'net': ENetImproved, 'B': 2, 'kernels': 8, 'factor': 2, 'root': 'TOY'}
-datasets_params["SEGTHOR_OURS"] = {'K': 5, 'net': ENetImproved, 'B': 8, 'kernels': 8, 'factor': 2, 'root': 'SEGTHOR'}
+# Other folds of SEGTHOR at seed=0. Fold-0 is just SEGTHOR above.
+for f in (1, 2, 3):
+    datasets_params[f"SEGTHOR_F{f}"] = dict(datasets_params["SEGTHOR"])
+    datasets_params[f"SEGTHOR_PREPROC_F{f}"] = dict(datasets_params["SEGTHOR_PREPROC"])
 
 
 def img_transform(img):

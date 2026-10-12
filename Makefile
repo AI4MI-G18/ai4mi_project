@@ -80,3 +80,20 @@ $(DATA_ROOT)/SEGTHOR_PREPROC_Z:
 	python $(CFLAGS) slice_segthor.py --source_dir $(SOURCE_DIR) --dest_dir $@_tmp \
 		--shape 256 256 --retain $(RETAIN) -p $(PROCS) $(HU_WINDOW) $(SPACING_Z)
 	mv $@_tmp $@
+
+
+## 4-fold CV
+## Fold-0 is SEGTHOR and SEGTHOR_PREPROC
+$(DATA_ROOT)/SEGTHOR_F%:
+	$(info $(green)python $(CFLAGS) slice_segthor.py --fold $*$(reset))
+	rm -rf $@_tmp $@
+	python $(CFLAGS) slice_segthor.py --source_dir $(SOURCE_DIR) --dest_dir $@_tmp \
+		--shape 256 256 --retain $(RETAIN) -p $(PROCS) --fold $*
+	mv $@_tmp $@
+
+$(DATA_ROOT)/SEGTHOR_PREPROC_F%:
+	$(info $(green)python $(CFLAGS) slice_segthor.py --fold $*$(reset))
+	rm -rf $@_tmp $@
+	python $(CFLAGS) slice_segthor.py --source_dir $(SOURCE_DIR) --dest_dir $@_tmp \
+		--shape 256 256 --retain $(RETAIN) -p $(PROCS) $(HU_WINDOW) $(SPACING) --fold $*
+	mv $@_tmp $@
